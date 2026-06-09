@@ -39,3 +39,10 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# generated assets & cache
+/public/videos/
+/data/video-cache.json
+/data/rooms.json
+/data/room-submissions.json
+

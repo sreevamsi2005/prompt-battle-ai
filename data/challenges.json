@@ -1,0 +1,35 @@
+[
+  {
+    "id": 1,
+    "video": "/videos/samurai.mp4",
+    "prompt": "A samurai walking through neon Tokyo in heavy rain",
+    "difficulty": "medium",
+    "recreationVideos": {
+      "low": "/videos/recreation-low.mp4",
+      "medium": "/videos/recreation-medium.mp4",
+      "high": "/videos/recreation-high.mp4"
+    }
+  },
+  {
+    "id": 2,
+    "video": "/videos/cyberpunk.mp4",
+    "prompt": "A lone hacker in a rain-soaked cyberpunk alley, holographic ads flickering overhead",
+    "difficulty": "hard",
+    "recreationVideos": {
+      "low": "/videos/recreation-low.mp4",
+      "medium": "/videos/recreation-medium.mp4",
+      "high": "/videos/recreation-high.mp4"
+    }
+  },
+  {
+    "id": 3,
+    "video": "/videos/ocean.mp4",
+    "prompt": "Golden hour drone shot over bioluminescent waves crashing on a volcanic black sand beach",
+    "difficulty": "easy",
+    "recreationVideos": {
+      "low": "/videos/recreation-low.mp4",
+      "medium": "/videos/recreation-medium.mp4",
+      "high": "/videos/recreation-high.mp4"
+    }
+  }
+]
