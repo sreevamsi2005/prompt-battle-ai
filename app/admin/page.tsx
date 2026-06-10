@@ -17,6 +17,8 @@ interface RoomAdminState {
 interface PromptListItem {
   id: string;
   theme: string;
+  difficulty: "easy" | "medium" | "hard";
+  prompt: string;
 }
 
 export default function AdminPage() {
@@ -47,7 +49,7 @@ export default function AdminPage() {
       });
       if (res.ok) {
         const data = await res.json();
-        setPromptsList(data.map((p: any) => ({ id: p.id, theme: p.theme })));
+        setPromptsList(data.map((p: any) => ({ id: p.id, theme: p.theme, difficulty: p.difficulty, prompt: p.prompt })));
       }
     } catch (err) {
       console.error("Failed to load prompt challenge list:", err);
@@ -255,7 +257,7 @@ export default function AdminPage() {
         </div>
 
         {/* Dashboard layout */}
-        <div className="grid gap-6 lg:grid-cols-[340px_1fr]">
+        <div className="grid gap-6 lg:grid-cols-[340px_1fr] lg:items-start">
           
           {/* Create Room Form */}
           <div className="graphite-card p-5 h-fit">
@@ -412,6 +414,74 @@ export default function AdminPage() {
               )}
             </div>
           </div>
+
+        </div>
+
+          {/* ── VIDEO CHALLENGE LIBRARY ─────────────────────────────── */}
+          {promptsList.length > 0 && (
+            <div className="graphite-card p-5 lg:col-span-2">
+              <h2 className="text-xs sm:text-sm font-bold text-white uppercase tracking-wider font-mono mb-4 border-b border-zinc-900 pb-2">
+                Challenge Video Library
+              </h2>
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+                {promptsList.map(p => (
+                  <div key={p.id} className="flex flex-col rounded-lg border border-zinc-800 bg-black overflow-hidden group">
+                    {/* Video thumbnail */}
+                    <div className="relative aspect-video bg-zinc-950 overflow-hidden">
+                      <video
+                        src={`/videos/${p.id}.mp4`}
+                        muted
+                        playsInline
+                        loop
+                        preload="none"
+                        onMouseEnter={e => (e.currentTarget as HTMLVideoElement).play().catch(() => {})}
+                        onMouseLeave={e => { const v = e.currentTarget as HTMLVideoElement; v.pause(); v.currentTime = 0; }}
+                        className="w-full h-full object-cover"
+                      />
+                      {/* Difficulty badge */}
+                      <span className={`absolute top-1.5 right-1.5 rounded px-1.5 py-0.5 text-[9px] font-bold uppercase font-mono border ${
+                        p.difficulty === "easy"
+                          ? "text-emerald-400 bg-emerald-500/10 border-emerald-500/30"
+                          : p.difficulty === "medium"
+                          ? "text-amber-400 bg-amber-500/10 border-amber-500/30"
+                          : "text-rose-400 bg-rose-500/10 border-rose-500/30"
+                      }`}>
+                        {p.difficulty}
+                      </span>
+                    </div>
+
+                    {/* Info + actions */}
+                    <div className="p-2 flex flex-col gap-2 flex-1">
+                      <div>
+                        <p className="text-[11px] font-bold text-white font-mono truncate">{p.id}</p>
+                        <p className="text-[10px] text-zinc-500 truncate">{p.theme}</p>
+                      </div>
+
+                      {/* Set as challenge for each room */}
+                      {adminRooms.length > 0 ? (
+                        adminRooms.map(room => (
+                          <button
+                            key={room.id}
+                            onClick={() => handleUpdateRoomChallenge(room.id, p.id)}
+                            className={`w-full rounded text-[10px] font-bold py-1.5 px-2 transition border font-mono uppercase tracking-wider ${
+                              room.activeChallengeId === p.id
+                                ? "bg-[#0066FF]/20 border-[#0066FF]/40 text-[#0066FF]"
+                                : "bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-600 hover:text-white"
+                            }`}
+                          >
+                            {room.activeChallengeId === p.id ? "✓ Active" : adminRooms.length > 1 ? `Set → ${room.name}` : "Set Challenge"}
+                          </button>
+                        ))
+                      ) : (
+                        <p className="text-[10px] text-zinc-600 font-mono text-center py-1">No rooms</p>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <p className="mt-3 text-[10px] text-zinc-600 font-mono">Hover a video to preview · Click to set as live challenge</p>
+            </div>
+          )}
 
         </div>
 
