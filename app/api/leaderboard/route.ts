@@ -1,17 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
-import { loadLeaderboard, saveLeaderboard, addEntry } from "@/lib/server-leaderboard";
+import { loadLeaderboard, addEntry } from "@/lib/server-leaderboard";
 import { addRoomSubmission, loadRoomSubmissions } from "@/lib/rooms";
 
 export async function GET(req: NextRequest) {
   const roomId = req.nextUrl.searchParams.get("roomId");
   if (roomId) {
-    // Return sorted submissions for specific room
-    const submissions = loadRoomSubmissions(roomId);
+    const submissions = await loadRoomSubmissions(roomId);
     return NextResponse.json(submissions.sort((a: any, b: any) => b.score - a.score));
   }
-  const entries = loadLeaderboard();
-  const sorted = entries.sort((a, b) => b.score - a.score);
-  return NextResponse.json(sorted);
+  const entries = await loadLeaderboard();
+  return NextResponse.json(entries.sort((a, b) => b.score - a.score));
 }
 
 export async function POST(req: NextRequest) {
@@ -30,13 +28,11 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Save to room leaderboard if roomId is provided
     if (roomId) {
-      addRoomSubmission(roomId, playerName, score);
+      await addRoomSubmission(roomId, playerName, score);
     }
 
-    // Save to global leaderboard
-    const entries = addEntry(playerName, score);
+    const entries = await addEntry(playerName, score);
     return NextResponse.json(entries.sort((a, b) => b.score - a.score));
   } catch (err) {
     console.error("Leaderboard API error:", err);

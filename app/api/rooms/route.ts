@@ -5,7 +5,7 @@ import { getPromptById } from "@/lib/booth-prompts";
 // GET /api/rooms - List all rooms for players to join
 export async function GET() {
   try {
-    const rooms = loadRooms();
+    const rooms = await loadRooms();
 
     const list = rooms.map(room => {
       let challengeDetails = null;

@@ -17,7 +17,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const room = registerPlayerHeartbeat(roomId, playerName.trim());
+    const room = await registerPlayerHeartbeat(roomId, playerName.trim());
     if (!room) {
       return NextResponse.json(
         { error: "Room not found or full" },
@@ -44,7 +44,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Get submissions for local leaderboard
-    const submissions = loadRoomSubmissions(roomId);
+    const submissions = await loadRoomSubmissions(roomId);
 
     // Form list of active players and whether they've submitted
     const activePlayersStatus = room.players.map(p => {
