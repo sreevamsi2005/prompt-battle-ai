@@ -415,8 +415,6 @@ export default function AdminPage() {
             </div>
           </div>
 
-        </div>
-
           {/* ── VIDEO CHALLENGE LIBRARY ─────────────────────────────── */}
           {promptsList.length > 0 && (
             <div className="graphite-card p-5 lg:col-span-2">
@@ -469,7 +467,7 @@ export default function AdminPage() {
                                 : "bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-600 hover:text-white"
                             }`}
                           >
-                            {room.activeChallengeId === p.id ? "✓ Active" : adminRooms.length > 1 ? `Set → ${room.name}` : "Set Challenge"}
+                            {room.activeChallengeId === p.id ? "Active" : adminRooms.length > 1 ? `Set: ${room.name}` : "Set Challenge"}
                           </button>
                         ))
                       ) : (
@@ -489,3 +487,4 @@ export default function AdminPage() {
     </div>
   );
 }
+
