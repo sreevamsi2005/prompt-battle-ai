@@ -41,7 +41,9 @@ yarn-error.log*
 next-env.d.ts
 
 # generated assets & cache
-/public/videos/
+# user-generated videos stay local only (served via fal.ai CDN on Netlify)
+/public/videos/user-*.mp4
+/public/videos/recreation-*.mp4
 /data/video-cache.json
 /data/rooms.json
 /data/room-submissions.json
