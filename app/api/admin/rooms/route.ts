@@ -76,7 +76,37 @@ export async function POST(req: NextRequest) {
     }
 
     const rooms = createRoom(name.trim(), maxUsers || 4);
-    return NextResponse.json(rooms);
+
+    // Return enriched rooms with challenge details and submissions (same format as GET)
+    const roomsWithDetails = rooms.map(room => {
+      let challengeDetails = null;
+      if (room.activeChallengeId) {
+        const challenge = getPromptById(room.activeChallengeId);
+        if (challenge) {
+          const cached = getCachedVideo(challenge.id);
+          const videoUrl = cached
+            ? (localVideoExists(challenge.id) ? cached.localPath : cached.cdnUrl)
+            : "";
+          challengeDetails = {
+            id: challenge.id,
+            theme: challenge.theme,
+            difficulty: challenge.difficulty,
+            videoUrl
+          };
+        }
+      }
+
+      const submissions = loadRoomSubmissions(room.id);
+
+      return {
+        ...room,
+        challengeDetails,
+        submissionCount: submissions.length,
+        submissions: submissions.sort((a, b) => b.score - a.score)
+      };
+    });
+
+    return NextResponse.json(roomsWithDetails);
   } catch (err) {
     console.error("Admin rooms POST error:", err);
     return NextResponse.json({ error: "Failed to create room" }, { status: 500 });
