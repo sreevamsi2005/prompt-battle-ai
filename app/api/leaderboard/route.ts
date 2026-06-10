@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { loadLeaderboard, saveLeaderboard, addEntry } from "@/lib/server-leaderboard";
-import { addRoomSubmission } from "@/lib/rooms";
+import { addRoomSubmission, loadRoomSubmissions } from "@/lib/rooms";
 
 export async function GET(req: NextRequest) {
   const roomId = req.nextUrl.searchParams.get("roomId");
   if (roomId) {
     // Return sorted submissions for specific room
-    const submissions = require("@/lib/rooms").loadRoomSubmissions(roomId);
+    const submissions = loadRoomSubmissions(roomId);
     return NextResponse.json(submissions.sort((a: any, b: any) => b.score - a.score));
   }
   const entries = loadLeaderboard();
