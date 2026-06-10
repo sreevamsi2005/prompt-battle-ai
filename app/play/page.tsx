@@ -287,8 +287,14 @@ export default function PlayPage() {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   
+  const [voiceStatus, setVoiceStatus] = useState<"idle" | "recording" | "processing">("idle");
+
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const activeChallengeIdRef = useRef<string | null>(null);
+  const recognitionRef = useRef<any>(null);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const voiceFinalRef = useRef<string>("");
 
   // Load player name on mount
   useEffect(() => {
@@ -445,6 +451,60 @@ export default function PlayPage() {
     } finally {
       setSubmitting(false);
     }
+  };
+
+  // Voice-to-text: live via Web Speech API + accurate final via Whisper
+  const startVoice = async () => {
+    voiceFinalRef.current = "";
+    setVoiceStatus("recording");
+
+    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (SR) {
+      const r = new SR();
+      r.continuous = true;
+      r.interimResults = true;
+      r.lang = "en-US";
+      r.onresult = (e: any) => {
+        let interim = "";
+        for (let i = e.resultIndex; i < e.results.length; i++) {
+          if (e.results[i].isFinal) voiceFinalRef.current += e.results[i][0].transcript + " ";
+          else interim = e.results[i][0].transcript;
+        }
+        setPrompt(voiceFinalRef.current + interim);
+      };
+      r.onerror = () => {};
+      r.start();
+      recognitionRef.current = r;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream);
+      audioChunksRef.current = [];
+      recorder.ondataavailable = (e) => { if (e.data.size > 0) audioChunksRef.current.push(e.data); };
+      recorder.onstop = async () => {
+        stream.getTracks().forEach((t) => t.stop());
+        setVoiceStatus("processing");
+        try {
+          const blob = new Blob(audioChunksRef.current, { type: "audio/webm" });
+          const fd = new FormData();
+          fd.append("audio", blob, "recording.webm");
+          const res = await fetch("/api/transcribe", { method: "POST", body: fd });
+          const data = await res.json();
+          if (data.text?.trim()) setPrompt(data.text.trim());
+        } catch {}
+        setVoiceStatus("idle");
+      };
+      recorder.start();
+      recorderRef.current = recorder;
+    } catch {
+      setVoiceStatus("idle");
+    }
+  };
+
+  const stopVoice = () => {
+    recognitionRef.current?.stop();
+    if (recorderRef.current?.state === "recording") recorderRef.current.stop();
   };
 
   // Fetch Global leaderboard for display in Results
@@ -701,20 +761,58 @@ export default function PlayPage() {
                       ref={promptRef}
                       value={prompt}
                       onChange={(e) => setPrompt(e.target.value)}
-                      placeholder="Enter prompt description..."
+                      placeholder={voiceStatus === "recording" ? "Listening... speak now" : "Enter prompt description..."}
                       maxLength={1000}
                       disabled={!challenge}
-                      className="flex-1 resize-none bg-transparent p-4 text-xs sm:text-sm leading-relaxed text-white placeholder:text-zinc-700 outline-none"
+                      className={`flex-1 resize-none bg-transparent p-4 text-xs sm:text-sm leading-relaxed text-white outline-none ${voiceStatus === "recording" ? "placeholder:text-[#0066FF]/60 placeholder:animate-pulse" : "placeholder:text-zinc-700"}`}
                     />
                     <div className="flex items-center justify-between border-t border-zinc-900 px-4 py-2.5 bg-black/60">
                       <span className="text-xs text-zinc-500 font-mono">{prompt.length}/1000 chars</span>
-                      <button
-                        onClick={() => { setPrompt(""); promptRef.current?.focus(); }}
-                        disabled={!prompt}
-                        className="text-xs font-semibold text-zinc-500 hover:text-white transition disabled:opacity-0"
-                      >
-                        Clear Text
-                      </button>
+                      <div className="flex items-center gap-3">
+                        {/* Voice input button */}
+                        <button
+                          type="button"
+                          onClick={voiceStatus === "recording" ? stopVoice : startVoice}
+                          disabled={!challenge || voiceStatus === "processing"}
+                          title={voiceStatus === "recording" ? "Stop recording" : "Speak your prompt"}
+                          className={`flex items-center gap-1.5 rounded text-xs font-semibold px-2.5 py-1 transition border ${
+                            voiceStatus === "recording"
+                              ? "bg-rose-500/20 border-rose-500/40 text-rose-400 animate-pulse"
+                              : voiceStatus === "processing"
+                              ? "bg-zinc-800 border-zinc-700 text-zinc-500 cursor-not-allowed"
+                              : "bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-white hover:border-zinc-600"
+                          }`}
+                        >
+                          {voiceStatus === "processing" ? (
+                            <>
+                              <svg className="h-3 w-3 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+                                <path d="M12 2a10 10 0 0 1 10 10" strokeLinecap="round" />
+                              </svg>
+                              <span>Transcribing</span>
+                            </>
+                          ) : voiceStatus === "recording" ? (
+                            <>
+                              <svg className="h-3 w-3" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1" /></svg>
+                              <span>Stop</span>
+                            </>
+                          ) : (
+                            <>
+                              <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                                <rect x="9" y="2" width="6" height="13" rx="3" />
+                                <path d="M5 10a7 7 0 0 0 14 0M12 19v3M9 22h6" />
+                              </svg>
+                              <span>Voice</span>
+                            </>
+                          )}
+                        </button>
+                        <button
+                          onClick={() => { setPrompt(""); promptRef.current?.focus(); }}
+                          disabled={!prompt}
+                          className="text-xs font-semibold text-zinc-500 hover:text-white transition disabled:opacity-0"
+                        >
+                          Clear
+                        </button>
+                      </div>
                     </div>
                   </div>
 
