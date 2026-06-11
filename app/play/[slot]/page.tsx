@@ -100,6 +100,8 @@ export default function PlayerSlotPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [voiceStatus, setVoiceStatus] = useState<VoiceStatus>("idle");
+  const [claiming, setClaiming] = useState(false);
+  const [slotTakenBy, setSlotTakenBy] = useState<string | null>(null);
 
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const prevChallengeId = useRef<string | null>(null);
@@ -107,6 +109,43 @@ export default function PlayerSlotPage() {
   const recorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const voiceFinalRef = useRef<string>("");
+  const deviceIdRef = useRef<string>("");
+
+  // Generate a stable device ID per browser tab
+  useEffect(() => {
+    const key = `deviceId_slot_${slotNum}`;
+    let id = sessionStorage.getItem(key);
+    if (!id) { id = crypto.randomUUID(); sessionStorage.setItem(key, id); }
+    deviceIdRef.current = id;
+  }, [slotNum]);
+
+  // Heartbeat to keep slot alive (every 5s after joining)
+  useEffect(() => {
+    if (phase === "setup") return;
+    const beat = async () => {
+      await fetch("/api/slots", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "heartbeat", slotNum, deviceId: deviceIdRef.current }),
+      });
+    };
+    beat();
+    const t = setInterval(beat, 5000);
+    return () => clearInterval(t);
+  }, [phase, slotNum]);
+
+  // Release slot when tab closes or component unmounts
+  useEffect(() => {
+    const release = () => {
+      const body = new Blob([JSON.stringify({ action: "release", slotNum, deviceId: deviceIdRef.current })], { type: "application/json" });
+      navigator.sendBeacon("/api/slots", body);
+    };
+    window.addEventListener("beforeunload", release);
+    return () => {
+      window.removeEventListener("beforeunload", release);
+      if (phase !== "setup") release();
+    };
+  }, [phase, slotNum]);
 
   // Poll for active room + challenge
   useEffect(() => {
@@ -194,10 +233,29 @@ export default function PlayerSlotPage() {
     if (recorderRef.current?.state === "recording") recorderRef.current.stop();
   };
 
-  const handleStart = (e: React.FormEvent) => {
+  const handleStart = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!playerName.trim()) return;
-    setPhase("waiting");
+    setClaiming(true);
+    setSlotTakenBy(null);
+    try {
+      const res = await fetch("/api/slots", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "claim", slotNum, deviceId: deviceIdRef.current, playerName: playerName.trim() }),
+      });
+      const data = await res.json();
+      if (!data.ok) {
+        setSlotTakenBy(data.takenBy ?? "someone else");
+        return;
+      }
+      setPhase("waiting");
+    } catch {
+      setSlotTakenBy(null);
+      setPhase("waiting"); // network error — let them in anyway
+    } finally {
+      setClaiming(false);
+    }
   };
 
   const handleSubmit = async () => {
@@ -284,10 +342,21 @@ export default function PlayerSlotPage() {
                   <form onSubmit={handleStart} className="mt-6 space-y-4">
                     <div>
                       <label className="block text-xs uppercase font-bold text-zinc-500 font-mono mb-2">Your Name</label>
-                      <input type="text" value={playerName} onChange={e => setPlayerName(e.target.value)} placeholder="e.g. CyberRider" maxLength={18} autoFocus className="input-field" />
+                      <input type="text" value={playerName} onChange={e => { setPlayerName(e.target.value); setSlotTakenBy(null); }} placeholder="e.g. CyberRider" maxLength={18} autoFocus className="input-field" />
                     </div>
-                    <button type="submit" disabled={!playerName.trim()} className="btn-primary w-full py-3 text-sm font-bold uppercase tracking-wider">
-                      Join Session
+                    {slotTakenBy && (
+                      <div className="rounded border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-400 font-semibold text-center">
+                        Slot {slotNum} is already taken by <span className="text-rose-300">{slotTakenBy}</span>.<br />
+                        <span className="text-xs font-normal text-rose-500/80 mt-1 block">Ask them to leave or use a different slot.</span>
+                      </div>
+                    )}
+                    <button type="submit" disabled={!playerName.trim() || claiming} className="btn-primary w-full py-3 text-sm font-bold uppercase tracking-wider flex items-center justify-center gap-2">
+                      {claiming ? (
+                        <>
+                          <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M12 2a10 10 0 0 1 10 10" strokeLinecap="round" /></svg>
+                          Checking slot…
+                        </>
+                      ) : "Join Session"}
                     </button>
                   </form>
                 </div>

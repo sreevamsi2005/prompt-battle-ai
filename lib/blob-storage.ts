@@ -11,6 +11,7 @@ const LOCAL_FILE: Record<string, string> = {
   "rooms:rooms": "data/rooms.json",
   "rooms:submissions": "data/room-submissions.json",
   "leaderboard:entries": "data/leaderboard.json",
+  "slots:claims": "data/slots.json",
 };
 
 export async function blobGet<T>(store: string, key: string, fallback: T): Promise<T> {
