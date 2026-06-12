@@ -1,4 +1,4 @@
-import { blobGet, blobSet } from "./blob-storage";
+import { blobGet, blobSet, blobUpdate } from "./blob-storage";
 import type { LeaderboardEntry } from "@/lib/types";
 
 export async function loadLeaderboard(): Promise<LeaderboardEntry[]> {
@@ -11,8 +11,10 @@ export async function saveLeaderboard(entries: LeaderboardEntry[]): Promise<void
 }
 
 export async function addEntry(playerName: string, score: number): Promise<LeaderboardEntry[]> {
-  const entries = await loadLeaderboard();
-  entries.push({ playerName: playerName.trim() || "Booth Player", score, timestamp: Date.now() });
-  await saveLeaderboard(entries);
-  return entries;
+  // Atomic update — concurrent submitters can't drop each other's entries.
+  return blobUpdate<LeaderboardEntry[]>("leaderboard", "entries", [], (cur) =>
+    [...cur, { playerName: playerName.trim() || "Booth Player", score, timestamp: Date.now() }]
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 100)
+  );
 }

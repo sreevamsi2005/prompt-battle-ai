@@ -2,9 +2,11 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import { getPlayerName, setPlayerName } from "@/lib/leaderboard";
 import { formatApiError } from "@/lib/error-stage";
+import { computePoints } from "@/lib/points";
 import type { ScoreResult, LeaderboardEntry } from "@/lib/types";
 
 /* ─── Types ─────────────────────────────────────────────────────────────── */
@@ -34,6 +36,7 @@ interface RoomPlayerStatus {
   playerName: string;
   hasSubmitted: boolean;
   score: number | null;
+  points: number | null;
 }
 
 interface RoomState {
@@ -43,7 +46,7 @@ interface RoomState {
   activeChallengeId: string | null;
   challengeDetails: Challenge | null;
   players: RoomPlayerStatus[];
-  submissions: { playerName: string; score: number; timestamp: number }[];
+  submissions: { playerName: string; score: number; points: number; timestamp: number }[];
 }
 
 /* ─── Constants ─────────────────────────────────────────────────────────── */
@@ -288,6 +291,11 @@ export default function PlayPage() {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [requestId, setRequestId] = useState<string | null>(null);
+  const [pointsEarned, setPointsEarned] = useState<number | null>(null);
+  const [replayRequested, setReplayRequested] = useState(false);
+  const [goingGlobal, setGoingGlobal] = useState(false);
+
+  const router = useRouter();
 
   const [voiceStatus, setVoiceStatus] = useState<"idle" | "recording" | "processing">("idle");
 
@@ -298,7 +306,7 @@ export default function PlayPage() {
   const audioChunksRef = useRef<Blob[]>([]);
   const voiceFinalRef = useRef<string>("");
   // Holds score + context needed by the polling effect (avoids stale-closure deps)
-  const pollCtxRef = useRef<{ score: ScoreResult; playerName: string; roomId: string | null; prompt: string } | null>(null);
+  const pollCtxRef = useRef<{ score: ScoreResult; points: number; playerName: string; roomId: string | null; prompt: string } | null>(null);
 
   // Load player name on mount
   useEffect(() => {
@@ -353,6 +361,8 @@ export default function PlayPage() {
               setPrompt("");
               setUserVideo(null);
               setResult(null);
+              setPointsEarned(null);
+              setReplayRequested(false);
               if (phase !== "playing") {
                 setPhase("playing");
               }
@@ -406,17 +416,21 @@ export default function PlayPage() {
 
     const finish = async (videoUrl: string | null) => {
       if (cancelled || !pollCtxRef.current) return;
-      const { score, playerName: name, roomId, prompt: p } = pollCtxRef.current;
-      try {
-        const r = await fetch("/api/leaderboard", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ playerName: name, score: score.score, roomId: roomId || undefined }),
-        });
-        if (r.ok) setGlobalLeaderboard(await r.json());
-      } catch {}
+      const { score, points, playerName: name, roomId, prompt: p } = pollCtxRef.current;
+      // In a room, record the submission. Solo runs have no roomId — nothing to
+      // record until the player publishes to the global board from the results.
+      if (roomId) {
+        try {
+          await fetch("/api/leaderboard", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ scope: "room", playerName: name, similarity: score.score, points, roomId }),
+          });
+        } catch {}
+      }
       if (videoUrl) setUserVideo({ videoUrl, promptUsed: p });
       setResult(score);
+      setPointsEarned(points);
       setRequestId(null);
       setPhase("results");
     };
@@ -469,21 +483,26 @@ export default function PlayPage() {
       const scoreData = (await scoreRes.json()) as ScoreResult;
       if (!scoreRes.ok) throw new Error(formatApiError(scoreData as any, "Scoring failed."));
 
+      const points = challenge ? computePoints(challenge.difficulty, scoreData.score) : 0;
       // Store context for the polling effect to use
-      pollCtxRef.current = { score: scoreData, playerName: name, roomId: selectedRoomId, prompt: prompt.trim() };
+      pollCtxRef.current = { score: scoreData, points, playerName: name, roomId: selectedRoomId, prompt: prompt.trim() };
 
       if (!genData.requestId) {
         // No FAL_KEY or submit failed — show results with score only
         if (genData.error && !genData.skipped) {
           setError(formatApiError(genData, "Video generation unavailable."));
         }
-        const r = await fetch("/api/leaderboard", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ playerName: name, score: scoreData.score, roomId: selectedRoomId || undefined }),
-        });
-        if (r.ok) setGlobalLeaderboard(await r.json());
+        if (selectedRoomId) {
+          try {
+            await fetch("/api/leaderboard", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ scope: "room", playerName: name, similarity: scoreData.score, points, roomId: selectedRoomId }),
+            });
+          } catch {}
+        }
         setResult(scoreData);
+        setPointsEarned(points);
         setPhase("results");
       } else {
         setRequestId(genData.requestId);
@@ -559,6 +578,35 @@ export default function PlayPage() {
         .catch(err => console.error("Global leaderboard load failed:", err));
     }
   }, [phase]);
+
+  // Ask the admin (booth operator) to start the next challenge for this room.
+  const requestNextChallenge = async () => {
+    if (!selectedRoomId || replayRequested) return;
+    setReplayRequested(true);
+    try {
+      await fetch("/api/rooms/replay-request", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ roomId: selectedRoomId, playerName: playerName.trim() || "Anonymous Player" }),
+      });
+    } catch {
+      setReplayRequested(false);
+    }
+  };
+
+  // Publish this round's points to the global leaderboard, then open it.
+  const goToGlobalLeaderboard = async () => {
+    if (goingGlobal) return;
+    setGoingGlobal(true);
+    try {
+      await fetch("/api/leaderboard", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scope: "global", playerName: playerName.trim() || "Anonymous Player", points: pointsEarned ?? 0 }),
+      });
+    } catch {}
+    router.push("/leaderboard");
+  };
 
   // Join Room button click
   const handleJoinRoom = (room: RoomListItem) => {
@@ -934,11 +982,17 @@ export default function PlayPage() {
                   <ScorePanel score={result.score} feedback={result.feedback} />
                   
                   {/* Prompt reveal summary */}
-                  <div className="graphite-card p-5 flex flex-col justify-between">
+                  <div className="graphite-card p-5 flex flex-col justify-between gap-3">
                     <div>
                       <p className="text-[10px] uppercase font-bold tracking-wider text-zinc-500 font-mono">Evaluated Prompt</p>
                       <p className="text-xs sm:text-sm text-zinc-200 leading-relaxed mt-2 italic font-mono">"{prompt}"</p>
                     </div>
+                    {pointsEarned !== null && (
+                      <div className="flex items-center justify-between rounded-lg border border-[#0066FF]/30 bg-[#0066FF]/10 px-4 py-2.5">
+                        <span className="text-[10px] uppercase font-bold tracking-wider text-zinc-400 font-mono">Points Earned</span>
+                        <span className="text-xl font-bold text-[#0066FF] font-mono">+{pointsEarned}</span>
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -976,7 +1030,7 @@ export default function PlayPage() {
                                 <span className="w-5 text-center font-mono font-bold text-zinc-600">{idx + 1}</span>
                                 <span className="truncate max-w-[150px]">{sub.playerName}</span>
                               </div>
-                              <span className="font-mono text-[#0066FF] font-bold">{sub.score}</span>
+                              <span className="font-mono text-[#0066FF] font-bold">{sub.points} pts</span>
                             </div>
                           );
                         })
@@ -1025,27 +1079,37 @@ export default function PlayPage() {
                 </div>
 
                 {/* Final action bar */}
-                <div className="flex gap-3 border-t border-zinc-900 pt-4 mt-2">
+                <div className="flex flex-wrap gap-3 border-t border-zinc-900 pt-4 mt-2">
                   {selectedRoomId ? (
-                    <div className="flex-1 text-center py-2.5 text-xs sm:text-sm text-zinc-400 font-mono graphite-card flex items-center justify-center gap-2">
-                      <span className="h-2 w-2 bg-[#0066FF] rounded-full animate-ping" />
-                      Waiting for Admin to choose next challenge video...
-                    </div>
+                    <button
+                      onClick={requestNextChallenge}
+                      disabled={replayRequested}
+                      className="btn-secondary flex-1 min-w-[200px] py-3 text-sm font-bold disabled:opacity-60"
+                    >
+                      {replayRequested ? "Request Sent ✓ — Waiting for Admin" : "Request Next Challenge"}
+                    </button>
                   ) : (
                     <button
                       onClick={loadSoloChallenge}
-                      className="btn-primary flex-1 py-3 text-sm font-bold"
+                      className="btn-secondary flex-1 min-w-[200px] py-3 text-sm font-bold"
                     >
                       Play Next Challenge
                     </button>
                   )}
+                  <button
+                    onClick={goToGlobalLeaderboard}
+                    disabled={goingGlobal}
+                    className="btn-primary flex-1 min-w-[200px] py-3 text-sm font-bold"
+                  >
+                    {goingGlobal ? "Publishing…" : "Go to Global Leaderboard →"}
+                  </button>
                   <button
                     onClick={() => {
                       setSelectedRoomId(null);
                       setPhase("lobby");
                       setChallenge(null);
                     }}
-                    className="btn-secondary flex-1 py-3 text-sm"
+                    className="btn-secondary flex-1 min-w-[200px] py-3 text-sm"
                   >
                     Lobby Dashboard
                   </button>

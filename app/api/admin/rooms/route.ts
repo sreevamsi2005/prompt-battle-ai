@@ -5,9 +5,12 @@ import {
   createRoom,
   updateRoomChallenge,
   deleteRoom,
-  loadRoomSubmissions
+  loadRoomSubmissions,
+  loadReplayRequests,
+  clearReplayRequests,
+  clearRoomSubmissions
 } from "@/lib/rooms";
-import { getPromptById } from "@/lib/booth-prompts";
+import { getPromptById, getRandomPrompt } from "@/lib/booth-prompts";
 import { getCachedVideo } from "@/lib/video-cache";
 import { localVideoExists } from "@/lib/download-video";
 
@@ -31,11 +34,13 @@ async function enrichRooms(rooms: Awaited<ReturnType<typeof loadRooms>>) {
   return Promise.all(
     rooms.map(async room => {
       const submissions = await loadRoomSubmissions(room.id);
+      const replayRequests = await loadReplayRequests(room.id);
       return {
         ...room,
         challengeDetails: buildChallengeDetails(room.activeChallengeId),
         submissionCount: submissions.length,
-        submissions: submissions.sort((a, b) => b.score - a.score),
+        submissions: submissions.sort((a, b) => b.points - a.points),
+        replayRequests: replayRequests.sort((a, b) => a.timestamp - b.timestamp),
       };
     })
   );
@@ -75,9 +80,41 @@ export async function PUT(req: NextRequest) {
     if (!id) return NextResponse.json({ error: "Room ID required" }, { status: 400 });
     const room = await updateRoomChallenge(id, challengeId);
     if (!room) return NextResponse.json({ error: "Room not found" }, { status: 404 });
+    // Setting a new challenge resolves any pending "play again" requests.
+    await clearReplayRequests(id);
     return NextResponse.json(room);
   } catch (err) {
     console.error("Admin rooms PUT error:", err);
+    return NextResponse.json({ error: "Failed to update room" }, { status: 500 });
+  }
+}
+
+// PATCH /api/admin/rooms?id=ROOM — operational actions on a room.
+// body: { action: "reset-scores" | "clear-requests" | "assign-random" }
+export async function PATCH(req: NextRequest) {
+  if (!checkAuth(req)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  try {
+    const id = req.nextUrl.searchParams.get("id");
+    if (!id) return NextResponse.json({ error: "Room ID required" }, { status: 400 });
+    const { action } = (await req.json()) as { action?: string };
+
+    if (action === "reset-scores") {
+      await clearRoomSubmissions(id);
+      await clearReplayRequests(id);
+    } else if (action === "clear-requests") {
+      await clearReplayRequests(id);
+    } else if (action === "assign-random") {
+      const pick = getRandomPrompt();
+      await updateRoomChallenge(id, pick.id);
+      await clearReplayRequests(id);
+    } else {
+      return NextResponse.json({ error: "Unknown action" }, { status: 400 });
+    }
+
+    const rooms = await loadRooms();
+    return NextResponse.json(await enrichRooms(rooms));
+  } catch (err) {
+    console.error("Admin rooms PATCH error:", err);
     return NextResponse.json({ error: "Failed to update room" }, { status: 500 });
   }
 }

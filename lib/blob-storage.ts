@@ -140,3 +140,32 @@ export async function blobDelete(store: string, key: string): Promise<void> {
     console.error(`[fs] delete ${file} failed:`, err);
   }
 }
+
+/**
+ * Read-modify-write with optimistic concurrency. Reapplies `mutate` against the
+ * latest value and retries if another writer changed the key in between, so two
+ * simultaneous updates never clobber each other (the bug behind lost scores when
+ * several players submit at once). Returns the value that was written.
+ */
+export async function blobUpdate<T>(
+  store: string,
+  key: string,
+  fallback: T,
+  mutate: (current: T) => T,
+  maxRetries = 6
+): Promise<T> {
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    const { value, etag } = await blobGetWithEtag<T>(store, key);
+    const next = mutate(value ?? fallback);
+
+    if (value === null || etag === undefined) {
+      const { modified } = await blobSetIfNew(store, key, next);
+      if (modified) return next;
+    } else {
+      const { modified } = await blobSetIfMatch(store, key, next, etag);
+      if (modified) return next;
+    }
+    // Contended — another writer won this round; loop re-reads and reapplies.
+  }
+  throw new Error(`blobUpdate: ${store}/${key} stayed contended after ${maxRetries} retries`);
+}

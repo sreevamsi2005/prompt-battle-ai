@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { registerPlayerHeartbeat, loadRoomSubmissions } from "@/lib/rooms";
+import { registerPlayerHeartbeat, loadRoomSubmissions, loadReplayRequests } from "@/lib/rooms";
 import { getPromptById } from "@/lib/booth-prompts";
 import { getCachedVideo } from "@/lib/video-cache";
 import { localVideoExists } from "@/lib/download-video";
@@ -45,6 +45,7 @@ export async function POST(req: NextRequest) {
 
     // Get submissions for local leaderboard
     const submissions = await loadRoomSubmissions(roomId);
+    const replayRequests = await loadReplayRequests(roomId);
 
     // Form list of active players and whether they've submitted
     const activePlayersStatus = room.players.map(p => {
@@ -52,7 +53,8 @@ export async function POST(req: NextRequest) {
       return {
         playerName: p.playerName,
         hasSubmitted: !!sub,
-        score: sub ? sub.score : null
+        score: sub ? sub.score : null,
+        points: sub ? sub.points : null
       };
     });
 
@@ -63,7 +65,8 @@ export async function POST(req: NextRequest) {
       activeChallengeId: room.activeChallengeId,
       challengeDetails,
       players: activePlayersStatus,
-      submissions: submissions.sort((a, b) => b.score - a.score)
+      submissions: submissions.sort((a, b) => b.points - a.points),
+      replayRequests: replayRequests.sort((a, b) => a.timestamp - b.timestamp)
     });
   } catch (err) {
     console.error("Room heartbeat error:", err);

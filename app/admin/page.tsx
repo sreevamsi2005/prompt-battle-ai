@@ -11,7 +11,8 @@ interface RoomAdminState {
   activeChallengeId: string | null;
   players: { playerName: string; lastSeen: number }[];
   submissionCount: number;
-  submissions: { playerName: string; score: number; timestamp: number }[];
+  submissions: { playerName: string; score: number; points: number; timestamp: number }[];
+  replayRequests: { roomId: string; playerName: string; timestamp: number }[];
 }
 
 interface PromptListItem {
@@ -158,6 +159,25 @@ export default function AdminPage() {
         loadRoomsData();
       } else {
         alert("Failed to sync room video challenge");
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  // Operational actions: reset-scores | clear-requests | assign-random
+  const handleRoomAction = async (roomId: string, action: string) => {
+    if (action === "reset-scores" && !confirm("Clear all scores for this room?")) return;
+    try {
+      const res = await fetch(`/api/admin/rooms?id=${roomId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", "x-admin-password": password },
+        body: JSON.stringify({ action }),
+      });
+      if (res.ok) {
+        setAdminRooms(await res.json());
+      } else {
+        alert("Action failed");
       }
     } catch (e) {
       console.error(e);
@@ -348,6 +368,38 @@ export default function AdminPage() {
                     </div>
                   </div>
 
+                  {/* Pending next-challenge requests from players */}
+                  {room.replayRequests && room.replayRequests.length > 0 && (
+                    <div className="flex items-start justify-between gap-3 rounded border border-amber-500/30 bg-amber-500/10 px-3 py-2">
+                      <p className="text-xs text-amber-300 font-mono leading-relaxed">
+                        <span className="font-bold">🔔 {room.replayRequests.length} request{room.replayRequests.length > 1 ? "s" : ""} for the next challenge:</span>{" "}
+                        {room.replayRequests.map(r => r.playerName).join(", ")}
+                      </p>
+                      <button
+                        onClick={() => handleRoomAction(room.id, "clear-requests")}
+                        className="flex-shrink-0 text-[10px] uppercase font-bold font-mono text-amber-400 hover:text-amber-300 border border-amber-500/30 rounded px-2 py-1"
+                      >
+                        Dismiss
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Quick actions */}
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      onClick={() => handleRoomAction(room.id, "assign-random")}
+                      className="text-[10px] uppercase font-bold font-mono text-zinc-300 bg-zinc-900 border border-zinc-800 hover:border-[#0066FF]/50 hover:text-white rounded px-2.5 py-1.5 transition"
+                    >
+                      🎲 Random Challenge
+                    </button>
+                    <button
+                      onClick={() => handleRoomAction(room.id, "reset-scores")}
+                      className="text-[10px] uppercase font-bold font-mono text-zinc-300 bg-zinc-900 border border-zinc-800 hover:border-rose-500/50 hover:text-rose-300 rounded px-2.5 py-1.5 transition"
+                    >
+                      Reset Scores
+                    </button>
+                  </div>
+
                   {/* Room dashboard details (users and submissions) */}
                   <div className="grid gap-3 sm:grid-cols-2">
                     {/* Joined users status */}
@@ -392,10 +444,13 @@ export default function AdminPage() {
                         {room.submissions && room.submissions.length > 0 ? (
                           room.submissions.map((sub, idx) => (
                             <div key={sub.playerName + idx} className="flex items-center justify-between text-xs font-mono">
-                              <span className="text-zinc-400 truncate max-w-[140px]">
+                              <span className="text-zinc-400 truncate max-w-[120px]">
                                 #{idx + 1} {sub.playerName}
                               </span>
-                              <span className="text-white font-bold">{sub.score}</span>
+                              <span className="flex items-center gap-2">
+                                <span className="text-zinc-600">{sub.score}%</span>
+                                <span className="text-[#0066FF] font-bold">{sub.points} pts</span>
+                              </span>
                             </div>
                           ))
                         ) : (

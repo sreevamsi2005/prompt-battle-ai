@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { formatApiError } from "@/lib/error-stage";
+import { computePoints } from "@/lib/points";
 
 type Phase = "setup" | "waiting" | "playing" | "generating" | "results";
 type VoiceStatus = "idle" | "recording" | "processing";
@@ -31,6 +32,12 @@ interface ScoreResult {
 
 interface UserVideo {
   videoUrl: string;
+}
+
+interface RoomStanding {
+  playerName: string;
+  score: number;
+  points: number;
 }
 
 const DIFFICULTY_STYLE = {
@@ -104,6 +111,12 @@ export default function PlayerSlotPage() {
   const [claiming, setClaiming] = useState(false);
   const [slotTakenBy, setSlotTakenBy] = useState<string | null>(null);
   const [requestId, setRequestId] = useState<string | null>(null);
+  const [pointsEarned, setPointsEarned] = useState<number | null>(null);
+  const [standings, setStandings] = useState<RoomStanding[]>([]);
+  const [replayRequested, setReplayRequested] = useState(false);
+  const [goingGlobal, setGoingGlobal] = useState(false);
+
+  const router = useRouter();
 
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const prevChallengeId = useRef<string | null>(null);
@@ -112,7 +125,7 @@ export default function PlayerSlotPage() {
   const audioChunksRef = useRef<Blob[]>([]);
   const voiceFinalRef = useRef<string>("");
   const deviceIdRef = useRef<string>("");
-  const pollCtxRef = useRef<{ score: ScoreResult; playerName: string; roomId: string; prompt: string } | null>(null);
+  const pollCtxRef = useRef<{ score: ScoreResult; points: number; playerName: string; roomId: string; prompt: string } | null>(null);
 
   // Generate a stable device ID per browser tab
   useEffect(() => {
@@ -171,6 +184,9 @@ export default function PlayerSlotPage() {
           setPrompt("");
           setUserVideo(null);
           setResult(null);
+          setPointsEarned(null);
+          setReplayRequested(false);
+          setError(null);
           setPhase("playing");
         }
       } catch (e) {
@@ -276,16 +292,17 @@ export default function PlayerSlotPage() {
 
     const finish = async (videoUrl: string | null) => {
       if (cancelled || !pollCtxRef.current) return;
-      const { score, playerName: name, roomId, prompt: p } = pollCtxRef.current;
+      const { score, points, playerName: name, roomId } = pollCtxRef.current;
       try {
         await fetch("/api/leaderboard", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ playerName: name, score: score.score, roomId }),
+          body: JSON.stringify({ scope: "room", playerName: name, similarity: score.score, points, roomId }),
         });
       } catch {}
       if (videoUrl) setUserVideo({ videoUrl });
       setResult(score);
+      setPointsEarned(points);
       setRequestId(null);
       setPhase("results");
     };
@@ -311,6 +328,52 @@ export default function PlayerSlotPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [requestId, phase]);
 
+  // While viewing results, keep roommate standings fresh.
+  useEffect(() => {
+    if (phase !== "results" || !room?.id) return;
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const res = await fetch(`/api/leaderboard?roomId=${room.id}`);
+        if (!res.ok) return;
+        const data: RoomStanding[] = await res.json();
+        if (!cancelled) setStandings(data);
+      } catch {}
+    };
+    load();
+    const t = setInterval(load, 3000);
+    return () => { cancelled = true; clearInterval(t); };
+  }, [phase, room?.id]);
+
+  // Ask the admin for the next challenge.
+  const requestNextChallenge = async () => {
+    if (!room?.id || replayRequested) return;
+    setReplayRequested(true);
+    try {
+      await fetch("/api/rooms/replay-request", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ roomId: room.id, playerName: playerName.trim() || `Player ${slotNum}` }),
+      });
+    } catch {
+      setReplayRequested(false);
+    }
+  };
+
+  // Publish this round's points to the global leaderboard, then open it.
+  const goToGlobalLeaderboard = async () => {
+    if (goingGlobal) return;
+    setGoingGlobal(true);
+    try {
+      await fetch("/api/leaderboard", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scope: "global", playerName: playerName.trim() || `Player ${slotNum}`, points: pointsEarned ?? 0 }),
+      });
+    } catch {}
+    router.push("/leaderboard");
+  };
+
   const handleSubmit = async () => {
     if (!room?.challengeDetails || !prompt.trim()) return;
     setSubmitting(true);
@@ -326,7 +389,8 @@ export default function PlayerSlotPage() {
       if (!scoreRes.ok) throw new Error(formatApiError(scoreData as any, "Scoring failed."));
 
       const name = playerName.trim() || `Player ${slotNum}`;
-      pollCtxRef.current = { score: scoreData, playerName: name, roomId: room.id, prompt: prompt.trim() };
+      const points = computePoints(room.challengeDetails.difficulty, scoreData.score);
+      pollCtxRef.current = { score: scoreData, points, playerName: name, roomId: room.id, prompt: prompt.trim() };
 
       if (!genData.requestId) {
         // No FAL_KEY or submit failed — skip video, go straight to results
@@ -336,9 +400,10 @@ export default function PlayerSlotPage() {
         await fetch("/api/leaderboard", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ playerName: name, score: scoreData.score, roomId: room.id }),
+          body: JSON.stringify({ scope: "room", playerName: name, similarity: scoreData.score, points, roomId: room.id }),
         });
         setResult(scoreData);
+        setPointsEarned(points);
         setPhase("results");
       } else {
         setRequestId(genData.requestId);
@@ -577,10 +642,16 @@ export default function PlayerSlotPage() {
                     </svg>
                     <span className="absolute text-xl font-bold tracking-tight text-white font-mono">{result.score}</span>
                   </div>
-                  <div>
+                  <div className="flex-1">
                     <p className="text-sm font-bold text-white">{result.score >= 80 ? "Superb Alignment" : result.score >= 50 ? "Moderate Resonance" : "Semantic Deviation"}</p>
                     <p className="mt-1 text-xs leading-relaxed text-zinc-400">{result.feedback}</p>
                   </div>
+                  {pointsEarned !== null && (
+                    <div className="flex-shrink-0 text-center rounded-lg border border-[#0066FF]/30 bg-[#0066FF]/10 px-4 py-3">
+                      <p className="text-2xl font-bold text-[#0066FF] font-mono leading-none">+{pointsEarned}</p>
+                      <p className="mt-1 text-[10px] uppercase font-bold tracking-wider text-zinc-500 font-mono">points</p>
+                    </div>
+                  )}
                 </div>
 
                 {/* Side-by-side videos */}
@@ -597,9 +668,48 @@ export default function PlayerSlotPage() {
                   )}
                 </div>
 
-                <div className="flex items-center justify-center border border-dashed border-zinc-800 rounded p-4">
-                  <span className="h-2 w-2 bg-[#0066FF] rounded-full animate-ping mr-2 flex-shrink-0" />
-                  <span className="text-xs text-zinc-400 font-mono">Waiting for admin to start next round…</span>
+                {/* Roommate standings */}
+                <div className="graphite-card p-4">
+                  <p className="text-xs uppercase font-bold tracking-wider text-[#0066FF] font-mono border-b border-zinc-900 pb-2 mb-2.5 flex items-center justify-between">
+                    <span>Room Standings{room?.name ? ` · ${room.name}` : ""}</span>
+                    <span className="text-[10px] font-normal text-zinc-500 normal-case">Live</span>
+                  </p>
+                  <div className="space-y-1.5 max-h-[200px] overflow-y-auto pr-1">
+                    {standings.length > 0 ? (
+                      standings.map((s, idx) => {
+                        const isMe = s.playerName.toLowerCase() === (playerName.trim() || `Player ${slotNum}`).toLowerCase();
+                        return (
+                          <div key={s.playerName + idx} className={`flex items-center justify-between rounded px-3 py-2 text-xs sm:text-sm border ${isMe ? "bg-[#0066FF]/15 border-[#0066FF]/35 text-white font-bold" : "bg-black/40 border-zinc-900 text-zinc-300"}`}>
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              <span className="w-5 text-center font-mono font-bold text-zinc-600">{idx + 1}</span>
+                              <span className="truncate">{s.playerName}</span>
+                            </div>
+                            <span className="font-mono text-[#0066FF] font-bold flex-shrink-0">{s.points} pts</span>
+                          </div>
+                        );
+                      })
+                    ) : (
+                      <p className="text-center py-6 text-xs text-zinc-600 font-mono">No scores recorded yet.</p>
+                    )}
+                  </div>
+                </div>
+
+                {/* Next-round actions */}
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <button
+                    onClick={requestNextChallenge}
+                    disabled={replayRequested}
+                    className="btn-secondary py-3 text-sm font-bold uppercase tracking-wider disabled:opacity-60"
+                  >
+                    {replayRequested ? "Request Sent ✓ — Waiting for Admin" : "Request Next Challenge"}
+                  </button>
+                  <button
+                    onClick={goToGlobalLeaderboard}
+                    disabled={goingGlobal}
+                    className="btn-primary py-3 text-sm font-bold uppercase tracking-wider"
+                  >
+                    {goingGlobal ? "Publishing…" : "Go to Global Leaderboard →"}
+                  </button>
                 </div>
               </motion.div>
             )}

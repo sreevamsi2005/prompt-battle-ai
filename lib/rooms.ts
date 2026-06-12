@@ -1,4 +1,4 @@
-import { blobGet, blobSet } from "./blob-storage";
+import { blobGet, blobSet, blobUpdate } from "./blob-storage";
 
 export interface ActivePlayer {
   playerName: string;
@@ -16,9 +16,16 @@ export interface Room {
 
 export interface RoomSubmission {
   playerName: string;
-  score: number;
+  score: number;   // similarity 0-100 from the scoring model
+  points: number;  // competition points awarded (difficulty × similarity tier)
   timestamp: number;
   roomId: string;
+}
+
+export interface ReplayRequest {
+  roomId: string;
+  playerName: string;
+  timestamp: number;
 }
 
 function cleanupInactivePlayers(room: Room): Room {
@@ -99,11 +106,46 @@ export async function loadRoomSubmissions(roomId?: string): Promise<RoomSubmissi
   return roomId ? all.filter(s => s.roomId === roomId) : all;
 }
 
-export async function addRoomSubmission(roomId: string, playerName: string, score: number): Promise<RoomSubmission[]> {
-  const all = await blobGet<RoomSubmission[]>("rooms", "submissions", []);
+export async function addRoomSubmission(
+  roomId: string,
+  playerName: string,
+  score: number,
+  points: number
+): Promise<RoomSubmission[]> {
   const name = playerName.trim() || "Anonymous";
-  const rest = all.filter(s => !(s.roomId === roomId && s.playerName.toLowerCase() === name.toLowerCase()));
-  rest.push({ roomId, playerName: name, score, timestamp: Date.now() });
-  await blobSet("rooms", "submissions", rest);
-  return rest.filter(s => s.roomId === roomId);
+  // Atomic update — concurrent submitters can't overwrite each other's rows.
+  const all = await blobUpdate<RoomSubmission[]>("rooms", "submissions", [], (cur) => {
+    const rest = cur.filter(s => !(s.roomId === roomId && s.playerName.toLowerCase() === name.toLowerCase()));
+    rest.push({ roomId, playerName: name, score, points, timestamp: Date.now() });
+    return rest;
+  });
+  return all.filter(s => s.roomId === roomId);
+}
+
+export async function clearRoomSubmissions(roomId: string): Promise<void> {
+  await blobUpdate<RoomSubmission[]>("rooms", "submissions", [], (cur) =>
+    cur.filter(s => s.roomId !== roomId)
+  );
+}
+
+/* ── Replay / "next challenge" requests raised by players ───────────────── */
+
+export async function loadReplayRequests(roomId?: string): Promise<ReplayRequest[]> {
+  const all = await blobGet<ReplayRequest[]>("rooms", "replay-requests", []);
+  return roomId ? all.filter(r => r.roomId === roomId) : all;
+}
+
+export async function addReplayRequest(roomId: string, playerName: string): Promise<void> {
+  const name = playerName.trim() || "Anonymous";
+  await blobUpdate<ReplayRequest[]>("rooms", "replay-requests", [], (cur) => {
+    const rest = cur.filter(r => !(r.roomId === roomId && r.playerName.toLowerCase() === name.toLowerCase()));
+    rest.push({ roomId, playerName: name, timestamp: Date.now() });
+    return rest;
+  });
+}
+
+export async function clearReplayRequests(roomId: string): Promise<void> {
+  await blobUpdate<ReplayRequest[]>("rooms", "replay-requests", [], (cur) =>
+    cur.filter(r => r.roomId !== roomId)
+  );
 }
