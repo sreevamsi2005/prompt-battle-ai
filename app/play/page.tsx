@@ -286,7 +286,8 @@ export default function PlayPage() {
   const [loadingRooms, setLoadingRooms] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  
+  const [requestId, setRequestId] = useState<string | null>(null);
+
   const [voiceStatus, setVoiceStatus] = useState<"idle" | "recording" | "processing">("idle");
 
   const promptRef = useRef<HTMLTextAreaElement>(null);
@@ -295,6 +296,8 @@ export default function PlayPage() {
   const recorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const voiceFinalRef = useRef<string>("");
+  // Holds score + context needed by the polling effect (avoids stale-closure deps)
+  const pollCtxRef = useRef<{ score: ScoreResult; playerName: string; roomId: string | null; prompt: string } | null>(null);
 
   // Load player name on mount
   useEffect(() => {
@@ -395,18 +398,54 @@ export default function PlayPage() {
     }
   };
 
-  // Submit Prompt to AI and Scorer
+  // Poll for video result while in "generating" phase
+  useEffect(() => {
+    if (phase !== "generating" || !requestId) return;
+    let cancelled = false;
+
+    const finish = async (videoUrl: string | null) => {
+      if (cancelled || !pollCtxRef.current) return;
+      const { score, playerName: name, roomId, prompt: p } = pollCtxRef.current;
+      try {
+        const r = await fetch("/api/leaderboard", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ playerName: name, score: score.score, roomId: roomId || undefined }),
+        });
+        if (r.ok) setGlobalLeaderboard(await r.json());
+      } catch {}
+      if (videoUrl) setUserVideo({ videoUrl, promptUsed: p });
+      setResult(score);
+      setRequestId(null);
+      setPhase("results");
+    };
+
+    const poll = async () => {
+      if (cancelled) return;
+      try {
+        const res = await fetch(`/api/generate-poll?requestId=${requestId}`);
+        const data = await res.json();
+        if (data.status === "COMPLETED") await finish(data.videoUrl);
+        else if (data.error) await finish(null);
+      } catch {}
+    };
+
+    poll();
+    const t = setInterval(poll, 3000);
+    return () => { cancelled = true; clearInterval(t); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requestId, phase]);
+
+  // Submit Prompt — fire-and-forget to queue, score in parallel
   const handleSubmitPrompt = async () => {
     if (!challenge || !prompt.trim()) return;
     const name = playerName.trim() || "Anonymous Player";
     setPlayerName(name);
     setPlayerNameState(name);
     setSubmitting(true);
-    setPhase("generating");
     setError(null);
 
     try {
-      // Parallel requests: video generation and semantic scoring
       const [genRes, scoreRes] = await Promise.all([
         fetch("/api/generate-prompt", {
           method: "POST",
@@ -422,32 +461,27 @@ export default function PlayPage() {
 
       const genData = await genRes.json();
       const scoreData = (await scoreRes.json()) as ScoreResult;
+      if (!scoreRes.ok) throw new Error("Scoring failed");
 
-      if (!genRes.ok || genData.error) throw new Error(genData.error ?? "Video rendering failed");
-      if (!scoreRes.ok) throw new Error("Prompt similarity evaluation failed");
+      // Store context for the polling effect to use
+      pollCtxRef.current = { score: scoreData, playerName: name, roomId: selectedRoomId, prompt: prompt.trim() };
 
-      // Save score to server leaderboard (local room and global)
-      const leaderboardRes = await fetch("/api/leaderboard", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          playerName: name,
-          score: scoreData.score,
-          roomId: selectedRoomId || undefined
-        }),
-      });
-
-      if (leaderboardRes.ok) {
-        const globalData = await leaderboardRes.json();
-        setGlobalLeaderboard(globalData);
+      if (!genData.requestId) {
+        // FAL_KEY not set or generation skipped — show results with score only
+        const r = await fetch("/api/leaderboard", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ playerName: name, score: scoreData.score, roomId: selectedRoomId || undefined }),
+        });
+        if (r.ok) setGlobalLeaderboard(await r.json());
+        setResult(scoreData);
+        setPhase("results");
+      } else {
+        setRequestId(genData.requestId);
+        setPhase("generating");
       }
-
-      setUserVideo(genData);
-      setResult(scoreData);
-      setPhase("results");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Something went wrong.");
-      setPhase("playing");
     } finally {
       setSubmitting(false);
     }
@@ -873,7 +907,7 @@ export default function PlayPage() {
             )}
 
             {/* RESULTS PHASE (Side-by-side local vs global leaderboards) ─ */}
-            {phase === "results" && challenge && userVideo && result && (
+            {phase === "results" && challenge && result && (
               <motion.div
                 key="results"
                 initial={{ opacity: 0 }}
@@ -894,7 +928,7 @@ export default function PlayPage() {
                 </div>
 
                 {/* Side-by-Side Dual Video */}
-                <DualVideo originalSrc={challenge.videoUrl} userSrc={userVideo.videoUrl} />
+                {userVideo && <DualVideo originalSrc={challenge.videoUrl} userSrc={userVideo.videoUrl} />}
 
                 {/* Side-by-Side LEADERBOARDS (Local vs Global) */}
                 <div className="grid gap-4 md:grid-cols-2 mt-2">

@@ -102,6 +102,7 @@ export default function PlayerSlotPage() {
   const [voiceStatus, setVoiceStatus] = useState<VoiceStatus>("idle");
   const [claiming, setClaiming] = useState(false);
   const [slotTakenBy, setSlotTakenBy] = useState<string | null>(null);
+  const [requestId, setRequestId] = useState<string | null>(null);
 
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const prevChallengeId = useRef<string | null>(null);
@@ -110,6 +111,7 @@ export default function PlayerSlotPage() {
   const audioChunksRef = useRef<Blob[]>([]);
   const voiceFinalRef = useRef<string>("");
   const deviceIdRef = useRef<string>("");
+  const pollCtxRef = useRef<{ score: ScoreResult; playerName: string; roomId: string; prompt: string } | null>(null);
 
   // Generate a stable device ID per browser tab
   useEffect(() => {
@@ -258,11 +260,48 @@ export default function PlayerSlotPage() {
     }
   };
 
+  // Poll for video while in "generating" phase
+  useEffect(() => {
+    if (phase !== "generating" || !requestId) return;
+    let cancelled = false;
+
+    const finish = async (videoUrl: string | null) => {
+      if (cancelled || !pollCtxRef.current) return;
+      const { score, playerName: name, roomId, prompt: p } = pollCtxRef.current;
+      try {
+        await fetch("/api/leaderboard", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ playerName: name, score: score.score, roomId }),
+        });
+      } catch {}
+      if (videoUrl) setUserVideo({ videoUrl });
+      setResult(score);
+      setRequestId(null);
+      setPhase("results");
+    };
+
+    const poll = async () => {
+      if (cancelled) return;
+      try {
+        const res = await fetch(`/api/generate-poll?requestId=${requestId}`);
+        const data = await res.json();
+        if (data.status === "COMPLETED") await finish(data.videoUrl);
+        else if (data.error) await finish(null);
+      } catch {}
+    };
+
+    poll();
+    const t = setInterval(poll, 3000);
+    return () => { cancelled = true; clearInterval(t); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requestId, phase]);
+
   const handleSubmit = async () => {
     if (!room?.challengeDetails || !prompt.trim()) return;
     setSubmitting(true);
-    setPhase("generating");
     setError(null);
+
     try {
       const [genRes, scoreRes] = await Promise.all([
         fetch("/api/generate-prompt", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userPrompt: prompt.trim() }) }),
@@ -270,18 +309,26 @@ export default function PlayerSlotPage() {
       ]);
       const genData = await genRes.json();
       const scoreData = (await scoreRes.json()) as ScoreResult;
-      if (!genRes.ok || genData.error) throw new Error(genData.error ?? "Generation failed");
-      await fetch("/api/leaderboard", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ playerName: playerName.trim() || `Player ${slotNum}`, score: scoreData.score, roomId: room.id }),
-      });
-      setUserVideo(genData);
-      setResult(scoreData);
-      setPhase("results");
+      if (!scoreRes.ok) throw new Error("Scoring failed");
+
+      const name = playerName.trim() || `Player ${slotNum}`;
+      pollCtxRef.current = { score: scoreData, playerName: name, roomId: room.id, prompt: prompt.trim() };
+
+      if (!genData.requestId) {
+        // No FAL_KEY — skip video, go straight to results
+        await fetch("/api/leaderboard", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ playerName: name, score: scoreData.score, roomId: room.id }),
+        });
+        setResult(scoreData);
+        setPhase("results");
+      } else {
+        setRequestId(genData.requestId);
+        setPhase("generating");
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Something went wrong.");
-      setPhase("playing");
     } finally {
       setSubmitting(false);
     }
@@ -491,7 +538,7 @@ export default function PlayerSlotPage() {
             )}
 
             {/* RESULTS */}
-            {phase === "results" && result && room?.challengeDetails && (
+            {phase === "results" && result && room?.challengeDetails && result && (
               <motion.div key="results" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex-1 flex flex-col gap-4 overflow-y-auto">
                 {/* Score */}
                 <div className="graphite-card p-5 flex items-center gap-5">
@@ -509,7 +556,7 @@ export default function PlayerSlotPage() {
                 </div>
 
                 {/* Side-by-side videos */}
-                <div className="grid grid-cols-2 gap-3">
+                <div className={`grid gap-3 ${userVideo ? "grid-cols-2" : "grid-cols-1 max-w-lg"}`}>
                   <div className="relative aspect-video rounded-lg overflow-hidden border border-zinc-700 bg-black">
                     <video src={room.challengeDetails.videoUrl} muted playsInline loop autoPlay className="w-full h-full object-cover" />
                     <span className="absolute top-2 left-2 rounded border border-zinc-700 bg-black/90 px-2 py-0.5 text-[10px] font-bold text-zinc-300 uppercase">Original</span>
