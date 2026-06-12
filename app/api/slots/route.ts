@@ -35,9 +35,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true });
     }
 
-    return NextResponse.json({ error: "Unknown action" }, { status: 400 });
+    return NextResponse.json({ error: "Unknown action", stage: "request" }, { status: 400 });
   } catch (err) {
-    console.error("Slots API error:", err);
-    return NextResponse.json({ error: "Failed" }, { status: 500 });
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("Slots API error:", message);
+    // Storage-layer failure — caller cannot safely assume the slot is free.
+    return NextResponse.json(
+      { error: `Slot service unavailable: ${message}`, stage: "storage" },
+      { status: 503 }
+    );
   }
 }

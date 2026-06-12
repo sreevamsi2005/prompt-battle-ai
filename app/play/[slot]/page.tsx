@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
+import { formatApiError } from "@/lib/error-stage";
 
 type Phase = "setup" | "waiting" | "playing" | "generating" | "results";
 type VoiceStatus = "idle" | "recording" | "processing";
@@ -240,6 +241,7 @@ export default function PlayerSlotPage() {
     if (!playerName.trim()) return;
     setClaiming(true);
     setSlotTakenBy(null);
+    setError(null);
     try {
       const res = await fetch("/api/slots", {
         method: "POST",
@@ -247,14 +249,21 @@ export default function PlayerSlotPage() {
         body: JSON.stringify({ action: "claim", slotNum, deviceId: deviceIdRef.current, playerName: playerName.trim() }),
       });
       const data = await res.json();
+
+      // Storage/service error — do NOT let them in, or two devices could share a slot.
+      if (!res.ok) {
+        setError(data.error ?? "Could not reach the slot service. Try again.");
+        return;
+      }
+      // Slot already held by someone else.
       if (!data.ok) {
-        setSlotTakenBy(data.takenBy ?? "someone else");
+        setSlotTakenBy(data.takenBy ?? "another player");
         return;
       }
       setPhase("waiting");
     } catch {
-      setSlotTakenBy(null);
-      setPhase("waiting"); // network error — let them in anyway
+      // Network failure reaching our own API — block rather than risk a double-claim.
+      setError("Network error verifying the slot. Check your connection and try again.");
     } finally {
       setClaiming(false);
     }
@@ -289,7 +298,7 @@ export default function PlayerSlotPage() {
         if (data.status === "COMPLETED") {
           await finish(data.videoUrl);
         } else if (data.status === "FAILED" || data.error) {
-          if (data.error) setError(`Video generation failed: ${data.error}`);
+          setError(formatApiError(data, "Video generation failed."));
           await finish(null);
         }
         // IN_QUEUE / IN_PROGRESS → keep polling
@@ -314,7 +323,7 @@ export default function PlayerSlotPage() {
       ]);
       const genData = await genRes.json();
       const scoreData = (await scoreRes.json()) as ScoreResult;
-      if (!scoreRes.ok) throw new Error("Scoring failed");
+      if (!scoreRes.ok) throw new Error(formatApiError(scoreData as any, "Scoring failed."));
 
       const name = playerName.trim() || `Player ${slotNum}`;
       pollCtxRef.current = { score: scoreData, playerName: name, roomId: room.id, prompt: prompt.trim() };
@@ -322,7 +331,7 @@ export default function PlayerSlotPage() {
       if (!genData.requestId) {
         // No FAL_KEY or submit failed — skip video, go straight to results
         if (genData.error && !genData.skipped) {
-          setError(`Video generation unavailable: ${genData.error}`);
+          setError(formatApiError(genData, "Video generation unavailable."));
         }
         await fetch("/api/leaderboard", {
           method: "POST",
@@ -403,6 +412,11 @@ export default function PlayerSlotPage() {
                       <div className="rounded border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-400 font-semibold text-center">
                         Slot {slotNum} is already taken by <span className="text-rose-300">{slotTakenBy}</span>.<br />
                         <span className="text-xs font-normal text-rose-500/80 mt-1 block">Ask them to leave or use a different slot.</span>
+                      </div>
+                    )}
+                    {error && !slotTakenBy && (
+                      <div className="rounded border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-400 font-semibold text-center">
+                        {error}
                       </div>
                     )}
                     <button type="submit" disabled={!playerName.trim() || claiming} className="btn-primary w-full py-3 text-sm font-bold uppercase tracking-wider flex items-center justify-center gap-2">

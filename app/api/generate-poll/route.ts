@@ -8,53 +8,67 @@ fal.config({ credentials: process.env.FAL_KEY });
 const MODEL = "fal-ai/vidu/q3/text-to-video/turbo";
 
 // GET /api/generate-poll?requestId=xxx
-// Returns { status: "IN_QUEUE"|"IN_PROGRESS"|"COMPLETED", videoUrl? }
+// Returns { status: "IN_QUEUE"|"IN_PROGRESS"|"COMPLETED"|"FAILED", videoUrl?, error?, stage? }
 export async function GET(req: NextRequest) {
   const requestId = req.nextUrl.searchParams.get("requestId");
   if (!requestId) {
-    return NextResponse.json({ error: "requestId required" }, { status: 400 });
+    return NextResponse.json({ error: "requestId required", stage: "request" }, { status: 400 });
   }
 
+  // Stage: poll the queue for status.
+  let status: Awaited<ReturnType<typeof fal.queue.status>>;
   try {
-    const status = await fal.queue.status(MODEL, { requestId, logs: false });
-
-    // Terminal failure states — stop polling immediately
-    if (status.status === "FAILED" || status.status === "CANCELLED") {
-      const raw = (status as any).error;
-      const detail = typeof raw === "string" ? raw : raw?.message ?? `Job ${status.status.toLowerCase()} on fal.ai`;
-      console.error(`fal.ai job ${status.status}:`, detail, "requestId:", requestId);
-      return NextResponse.json({ status: "FAILED", error: detail });
-    }
-
-    if (status.status !== "COMPLETED") {
-      return NextResponse.json({ status: status.status });
-    }
-
-    // Fetch the actual result only when done
-    const result = await fal.queue.result(MODEL, { requestId });
-    const output = result.data as any;
-    // Try common output shapes from fal.ai video models
-    const videoUrl: string | undefined =
-      output?.video?.url ??
-      output?.videos?.[0]?.url ??
-      output?.output?.video?.url ??
-      output?.url;
-
-    if (!videoUrl) {
-      const shape = JSON.stringify(output ?? {}).slice(0, 200);
-      console.error("Unexpected fal.ai result shape:", shape);
-      return NextResponse.json({ status: "FAILED", error: `No video URL in response. Shape: ${shape}` });
-    }
-
-    const generatedId = `user-${Date.now()}`;
-    setCachedVideo(generatedId, videoUrl);
-    downloadVideoInBackground(generatedId, videoUrl);
-
-    return NextResponse.json({ status: "COMPLETED", videoUrl });
+    status = await fal.queue.status(MODEL, { requestId, logs: false });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error("Generate poll error:", message);
-    // Return FAILED so clients stop polling rather than retrying indefinitely
-    return NextResponse.json({ status: "FAILED", error: message });
+    console.error("fal.ai queue status check failed:", message, "requestId:", requestId);
+    return NextResponse.json({ status: "FAILED", error: `Could not reach fal.ai queue: ${message}`, stage: "queue_status" });
   }
+
+  // fal.ai's TS types only model IN_QUEUE/IN_PROGRESS/COMPLETED, but the API
+  // can also return FAILED/CANCELLED at runtime — compare as a plain string.
+  const state = String(status.status);
+
+  // Terminal failure states reported by fal.ai — stop polling immediately.
+  if (state === "FAILED" || state === "CANCELLED") {
+    const raw = (status as any).error;
+    const detail = typeof raw === "string" ? raw : raw?.message ?? `Job ${state.toLowerCase()} on fal.ai`;
+    console.error(`fal.ai job ${state}:`, detail, "requestId:", requestId);
+    return NextResponse.json({ status: "FAILED", error: `fal.ai could not generate the video: ${detail}`, stage: "generation" });
+  }
+
+  // Still queued or running — tell the client to keep polling.
+  if (state !== "COMPLETED") {
+    return NextResponse.json({ status: state });
+  }
+
+  // Stage: fetch the completed result.
+  let output: any;
+  try {
+    const result = await fal.queue.result(MODEL, { requestId });
+    output = result.data;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("fal.ai result fetch failed:", message, "requestId:", requestId);
+    return NextResponse.json({ status: "FAILED", error: `Could not download the result from fal.ai: ${message}`, stage: "fetch_result" });
+  }
+
+  // Stage: extract the video URL (model output shapes vary).
+  const videoUrl: string | undefined =
+    output?.video?.url ??
+    output?.videos?.[0]?.url ??
+    output?.output?.video?.url ??
+    output?.url;
+
+  if (!videoUrl) {
+    const shape = JSON.stringify(output ?? {}).slice(0, 200);
+    console.error("Unexpected fal.ai result shape:", shape);
+    return NextResponse.json({ status: "FAILED", error: "fal.ai returned no video URL.", stage: "no_video" });
+  }
+
+  const generatedId = `user-${Date.now()}`;
+  setCachedVideo(generatedId, videoUrl);
+  downloadVideoInBackground(generatedId, videoUrl);
+
+  return NextResponse.json({ status: "COMPLETED", videoUrl });
 }

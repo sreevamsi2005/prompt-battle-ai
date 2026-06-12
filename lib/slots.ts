@@ -1,4 +1,4 @@
-import { blobGet, blobSet } from "./blob-storage";
+import { blobGetWithEtag, blobSetIfNew, blobSetIfMatch, blobDelete } from "./blob-storage";
 
 export interface SlotClaim {
   slotNum: number;
@@ -7,52 +7,81 @@ export interface SlotClaim {
   lastSeen: number;
 }
 
+// A claim is considered abandoned if no heartbeat arrives within this window.
+// Clients heartbeat every 5s, so 15s tolerates two missed beats before release.
 const TIMEOUT_MS = 15_000;
 
-async function loadClaims(): Promise<SlotClaim[]> {
-  const all = await blobGet<SlotClaim[]>("slots", "claims", []);
-  const now = Date.now();
-  // Drop stale claims automatically
-  return all.filter(c => now - c.lastSeen < TIMEOUT_MS);
+// Each slot is its own blob key so claims are independent and writes are atomic.
+const slotKey = (slotNum: number) => `slot-${slotNum}`;
+
+function isStale(claim: SlotClaim, now: number): boolean {
+  return now - claim.lastSeen >= TIMEOUT_MS;
 }
 
-async function saveClaims(claims: SlotClaim[]): Promise<void> {
-  await blobSet("slots", "claims", claims);
-}
-
+/**
+ * Attempt to claim a slot for a device. Atomic: if two devices race for the
+ * same free slot, exactly one wins — the other is told who holds it.
+ */
 export async function claimSlot(
   slotNum: number,
   deviceId: string,
   playerName: string
 ): Promise<{ ok: true } | { ok: false; takenBy: string }> {
-  const claims = await loadClaims();
-  const existing = claims.find(c => c.slotNum === slotNum);
+  const now = Date.now();
+  const { value: existing, etag } = await blobGetWithEtag<SlotClaim>("slots", slotKey(slotNum));
+  const claim: SlotClaim = { slotNum, deviceId, playerName, lastSeen: now };
 
-  if (existing && existing.deviceId !== deviceId) {
+  // Case 1: nobody holds it (or never created) — claim atomically.
+  if (!existing) {
+    const { modified } = await blobSetIfNew("slots", slotKey(slotNum), claim);
+    if (modified) return { ok: true };
+    // Lost the race — someone created it microseconds ago. Re-read to report them.
+    const { value: winner } = await blobGetWithEtag<SlotClaim>("slots", slotKey(slotNum));
+    if (winner && winner.deviceId === deviceId) return { ok: true };
+    return { ok: false, takenBy: winner?.playerName ?? "another player" };
+  }
+
+  // Case 2: we already hold it (same device re-joining) — renew.
+  if (existing.deviceId === deviceId) {
+    if (etag) await blobSetIfMatch("slots", slotKey(slotNum), claim, etag);
+    return { ok: true };
+  }
+
+  // Case 3: someone else holds it and it's still live — reject.
+  if (!isStale(existing, now)) {
     return { ok: false, takenBy: existing.playerName };
   }
 
-  const rest = claims.filter(c => c.slotNum !== slotNum);
-  rest.push({ slotNum, deviceId, playerName, lastSeen: Date.now() });
-  await saveClaims(rest);
-  return { ok: true };
+  // Case 4: stale claim — take it over, but only if nobody else touched it first.
+  if (etag) {
+    const { modified } = await blobSetIfMatch("slots", slotKey(slotNum), claim, etag);
+    if (modified) return { ok: true };
+  }
+  // The owner heartbeated or another device grabbed it between our read and write.
+  const { value: winner } = await blobGetWithEtag<SlotClaim>("slots", slotKey(slotNum));
+  if (winner && winner.deviceId === deviceId) return { ok: true };
+  return { ok: false, takenBy: winner?.playerName ?? "another player" };
 }
 
+/** Refresh the heartbeat. Returns false if the device no longer owns the slot. */
 export async function heartbeatSlot(slotNum: number, deviceId: string): Promise<boolean> {
-  const claims = await loadClaims();
-  const idx = claims.findIndex(c => c.slotNum === slotNum && c.deviceId === deviceId);
-  if (idx === -1) return false;
-  claims[idx].lastSeen = Date.now();
-  await saveClaims(claims);
-  return true;
+  const { value: existing, etag } = await blobGetWithEtag<SlotClaim>("slots", slotKey(slotNum));
+  if (!existing || existing.deviceId !== deviceId || !etag) return false;
+  const renewed: SlotClaim = { ...existing, lastSeen: Date.now() };
+  const { modified } = await blobSetIfMatch("slots", slotKey(slotNum), renewed, etag);
+  return modified;
 }
 
+/** Release a slot — only the owning device may delete its claim. */
 export async function releaseSlot(slotNum: number, deviceId: string): Promise<void> {
-  const claims = await loadClaims();
-  await saveClaims(claims.filter(c => !(c.slotNum === slotNum && c.deviceId === deviceId)));
+  const { value: existing } = await blobGetWithEtag<SlotClaim>("slots", slotKey(slotNum));
+  if (existing && existing.deviceId === deviceId) {
+    await blobDelete("slots", slotKey(slotNum));
+  }
 }
 
 export async function getSlotClaim(slotNum: number): Promise<SlotClaim | null> {
-  const claims = await loadClaims();
-  return claims.find(c => c.slotNum === slotNum) ?? null;
+  const { value } = await blobGetWithEtag<SlotClaim>("slots", slotKey(slotNum));
+  if (!value) return null;
+  return isStale(value, Date.now()) ? null : value;
 }

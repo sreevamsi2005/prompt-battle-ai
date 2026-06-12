@@ -14,6 +14,13 @@ const LOCAL_FILE: Record<string, string> = {
   "slots:claims": "data/slots.json",
 };
 
+function localPath(store: string, key: string): string {
+  return path.join(
+    process.cwd(),
+    LOCAL_FILE[`${store}:${key}`] ?? `data/${store}-${key}.json`
+  );
+}
+
 export async function blobGet<T>(store: string, key: string, fallback: T): Promise<T> {
   if (useBlobs()) {
     try {
@@ -47,4 +54,89 @@ export async function blobSet<T>(store: string, key: string, data: T): Promise<v
   const dir = path.dirname(file);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(file, JSON.stringify(data, null, 2), "utf-8");
+}
+
+/* ── Atomic primitives for concurrency-safe writes (e.g. slot locking) ──
+ * On Netlify these use conditional writes (onlyIfNew / onlyIfMatch) so two
+ * simultaneous requests cannot both succeed. Locally we run a single process,
+ * so file existence + mtime-as-etag is a faithful enough simulation for dev. */
+
+export interface EtagResult<T> {
+  value: T | null;
+  etag?: string;
+}
+
+export async function blobGetWithEtag<T>(store: string, key: string): Promise<EtagResult<T>> {
+  if (useBlobs()) {
+    try {
+      const { getStore } = await import("@netlify/blobs");
+      const res = await getStore(store).getWithMetadata(key, { type: "json" });
+      if (!res) return { value: null };
+      return { value: res.data as T, etag: res.etag };
+    } catch (err) {
+      console.error(`[blobs] getWithMetadata ${store}/${key} failed:`, err);
+      return { value: null };
+    }
+  }
+
+  const file = localPath(store, key);
+  try {
+    if (fs.existsSync(file)) {
+      const value = JSON.parse(fs.readFileSync(file, "utf-8")) as T;
+      return { value, etag: String(fs.statSync(file).mtimeMs) };
+    }
+  } catch (err) {
+    console.error(`[fs] read ${file} failed:`, err);
+  }
+  return { value: null };
+}
+
+/** Write only if the key does NOT already exist. Returns whether we won. */
+export async function blobSetIfNew<T>(store: string, key: string, data: T): Promise<{ modified: boolean }> {
+  if (useBlobs()) {
+    const { getStore } = await import("@netlify/blobs");
+    const res = await getStore(store).setJSON(key, data, { onlyIfNew: true });
+    return { modified: res.modified };
+  }
+
+  const file = localPath(store, key);
+  if (fs.existsSync(file)) return { modified: false };
+  const dir = path.dirname(file);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(data, null, 2), "utf-8");
+  return { modified: true };
+}
+
+/** Write only if the current ETag matches. Returns whether we won. */
+export async function blobSetIfMatch<T>(store: string, key: string, data: T, etag: string): Promise<{ modified: boolean }> {
+  if (useBlobs()) {
+    const { getStore } = await import("@netlify/blobs");
+    const res = await getStore(store).setJSON(key, data, { onlyIfMatch: etag });
+    return { modified: res.modified };
+  }
+
+  const file = localPath(store, key);
+  try {
+    if (!fs.existsSync(file)) return { modified: false };
+    if (String(fs.statSync(file).mtimeMs) !== etag) return { modified: false };
+  } catch {
+    return { modified: false };
+  }
+  fs.writeFileSync(file, JSON.stringify(data, null, 2), "utf-8");
+  return { modified: true };
+}
+
+export async function blobDelete(store: string, key: string): Promise<void> {
+  if (useBlobs()) {
+    const { getStore } = await import("@netlify/blobs");
+    await getStore(store).delete(key);
+    return;
+  }
+
+  const file = localPath(store, key);
+  try {
+    if (fs.existsSync(file)) fs.unlinkSync(file);
+  } catch (err) {
+    console.error(`[fs] delete ${file} failed:`, err);
+  }
 }

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { AnimatePresence, motion } from "framer-motion";
 import { getPlayerName, setPlayerName } from "@/lib/leaderboard";
+import { formatApiError } from "@/lib/error-stage";
 import type { ScoreResult, LeaderboardEntry } from "@/lib/types";
 
 /* ─── Types ─────────────────────────────────────────────────────────────── */
@@ -428,7 +429,7 @@ export default function PlayPage() {
         if (data.status === "COMPLETED") {
           await finish(data.videoUrl);
         } else if (data.status === "FAILED" || data.error) {
-          if (data.error) setError(`Video generation failed: ${data.error}`);
+          setError(formatApiError(data, "Video generation failed."));
           await finish(null);
         }
         // IN_QUEUE / IN_PROGRESS → keep polling
@@ -466,7 +467,7 @@ export default function PlayPage() {
 
       const genData = await genRes.json();
       const scoreData = (await scoreRes.json()) as ScoreResult;
-      if (!scoreRes.ok) throw new Error("Scoring failed");
+      if (!scoreRes.ok) throw new Error(formatApiError(scoreData as any, "Scoring failed."));
 
       // Store context for the polling effect to use
       pollCtxRef.current = { score: scoreData, playerName: name, roomId: selectedRoomId, prompt: prompt.trim() };
@@ -474,7 +475,7 @@ export default function PlayPage() {
       if (!genData.requestId) {
         // No FAL_KEY or submit failed — show results with score only
         if (genData.error && !genData.skipped) {
-          setError(`Video generation unavailable: ${genData.error}`);
+          setError(formatApiError(genData, "Video generation unavailable."));
         }
         const r = await fetch("/api/leaderboard", {
           method: "POST",
