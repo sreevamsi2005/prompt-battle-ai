@@ -425,8 +425,13 @@ export default function PlayPage() {
       try {
         const res = await fetch(`/api/generate-poll?requestId=${requestId}`);
         const data = await res.json();
-        if (data.status === "COMPLETED") await finish(data.videoUrl);
-        else if (data.error) await finish(null);
+        if (data.status === "COMPLETED") {
+          await finish(data.videoUrl);
+        } else if (data.status === "FAILED" || data.error) {
+          if (data.error) setError(`Video generation failed: ${data.error}`);
+          await finish(null);
+        }
+        // IN_QUEUE / IN_PROGRESS → keep polling
       } catch {}
     };
 
@@ -467,7 +472,10 @@ export default function PlayPage() {
       pollCtxRef.current = { score: scoreData, playerName: name, roomId: selectedRoomId, prompt: prompt.trim() };
 
       if (!genData.requestId) {
-        // FAL_KEY not set or generation skipped — show results with score only
+        // No FAL_KEY or submit failed — show results with score only
+        if (genData.error && !genData.skipped) {
+          setError(`Video generation unavailable: ${genData.error}`);
+        }
         const r = await fetch("/api/leaderboard", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -914,6 +922,12 @@ export default function PlayPage() {
                 animate={{ opacity: 1 }}
                 className="flex flex-col gap-4 flex-1 overflow-y-auto pr-1"
               >
+                {/* Generation error notice */}
+                {error && !userVideo && (
+                  <div className="rounded border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs text-amber-400 font-semibold text-center">
+                    {error} — your score is still recorded.
+                  </div>
+                )}
                 {/* Result header cards */}
                 <div className="grid gap-4 sm:grid-cols-[1fr_360px]">
                   <ScorePanel score={result.score} feedback={result.feedback} />

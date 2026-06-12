@@ -286,8 +286,13 @@ export default function PlayerSlotPage() {
       try {
         const res = await fetch(`/api/generate-poll?requestId=${requestId}`);
         const data = await res.json();
-        if (data.status === "COMPLETED") await finish(data.videoUrl);
-        else if (data.error) await finish(null);
+        if (data.status === "COMPLETED") {
+          await finish(data.videoUrl);
+        } else if (data.status === "FAILED" || data.error) {
+          if (data.error) setError(`Video generation failed: ${data.error}`);
+          await finish(null);
+        }
+        // IN_QUEUE / IN_PROGRESS → keep polling
       } catch {}
     };
 
@@ -315,7 +320,10 @@ export default function PlayerSlotPage() {
       pollCtxRef.current = { score: scoreData, playerName: name, roomId: room.id, prompt: prompt.trim() };
 
       if (!genData.requestId) {
-        // No FAL_KEY — skip video, go straight to results
+        // No FAL_KEY or submit failed — skip video, go straight to results
+        if (genData.error && !genData.skipped) {
+          setError(`Video generation unavailable: ${genData.error}`);
+        }
         await fetch("/api/leaderboard", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -540,6 +548,12 @@ export default function PlayerSlotPage() {
             {/* RESULTS */}
             {phase === "results" && result && room?.challengeDetails && result && (
               <motion.div key="results" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex-1 flex flex-col gap-4 overflow-y-auto">
+                {/* Generation error notice */}
+                {error && !userVideo && (
+                  <div className="rounded border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs text-amber-400 font-semibold text-center">
+                    {error} — your score is still recorded.
+                  </div>
+                )}
                 {/* Score */}
                 <div className="graphite-card p-5 flex items-center gap-5">
                   <div className="relative flex-shrink-0 h-20 w-20 flex items-center justify-center">
