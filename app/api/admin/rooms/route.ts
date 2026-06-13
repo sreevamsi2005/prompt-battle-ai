@@ -12,7 +12,6 @@ import {
 } from "@/lib/rooms";
 import { getPromptById, getRandomPrompt } from "@/lib/booth-prompts";
 import { getCachedVideo } from "@/lib/video-cache";
-import { localVideoExists } from "@/lib/download-video";
 
 function checkAuth(req: NextRequest): boolean {
   const password = req.headers.get("x-admin-password");
@@ -24,8 +23,11 @@ function buildChallengeDetails(activeChallengeId: string | null) {
   const challenge = getPromptById(activeChallengeId);
   if (!challenge) return null;
   const cached = getCachedVideo(challenge.id);
+  // Use localPath when the file is committed to git (downloaded: true).
+  // localVideoExists() always returns false on Netlify because public/ is not
+  // accessible from serverless functions — the file is served as a static asset.
   const videoUrl = cached
-    ? (localVideoExists(challenge.id) ? cached.localPath : cached.cdnUrl)
+    ? (cached.downloaded ? cached.localPath : (cached.cdnUrl || ""))
     : "";
   return { id: challenge.id, theme: challenge.theme, difficulty: challenge.difficulty, videoUrl };
 }

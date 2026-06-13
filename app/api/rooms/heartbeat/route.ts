@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { registerPlayerHeartbeat, loadRoomSubmissions, loadReplayRequests } from "@/lib/rooms";
 import { getPromptById } from "@/lib/booth-prompts";
 import { getCachedVideo } from "@/lib/video-cache";
-import { localVideoExists } from "@/lib/download-video";
 
 // POST /api/rooms/heartbeat - Heartbeat check for players in a room
 export async function POST(req: NextRequest) {
@@ -32,7 +31,7 @@ export async function POST(req: NextRequest) {
       if (challenge) {
         const cached = getCachedVideo(challenge.id);
         const videoUrl = cached
-          ? (localVideoExists(challenge.id) ? cached.localPath : cached.cdnUrl)
+          ? (cached.downloaded ? cached.localPath : (cached.cdnUrl || ""))
           : "";
         challengeDetails = {
           id: challenge.id,
