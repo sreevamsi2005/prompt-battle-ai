@@ -1,10 +1,6 @@
 import fs from "fs";
 import path from "path";
 
-// Statically imported — bundled at Next.js build time so it's available
-// inside Netlify Functions where fs cannot reach project root data files.
-import staticCacheData from "../data/video-cache.json";
-
 export interface CacheEntry {
   cdnUrl: string;
   localPath: string;
@@ -28,12 +24,7 @@ function load() {
   if (loaded) return;
   loaded = true;
 
-  // 1. Seed from the statically-bundled JSON — always works, including on Netlify.
-  for (const [k, v] of Object.entries(staticCacheData as Record<string, CacheEntry | string>)) {
-    loadEntry(k, v);
-  }
-
-  // 2. Override with the live file when running locally (non-fatal if absent).
+  // Load from local file when running in dev (non-fatal if absent).
   try {
     if (fs.existsSync(CACHE_FILE)) {
       const raw = fs.readFileSync(CACHE_FILE, "utf-8");
@@ -43,7 +34,7 @@ function load() {
       }
     }
   } catch {
-    // non-fatal — static import already seeded the cache
+    // non-fatal
   }
 }
 
