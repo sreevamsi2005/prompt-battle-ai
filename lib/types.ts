@@ -12,8 +12,11 @@ export interface Challenge {
 
 export interface LeaderboardEntry {
   playerName: string;
-  score: number;
+  similarityScore: number;
+  normalizedScore: number;
+  timeTakenToPrompt: number; // seconds
   timestamp: number;
+  email?: string;
 }
 
 export interface ScoreResult {

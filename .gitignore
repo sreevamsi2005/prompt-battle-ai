@@ -47,4 +47,9 @@ next-env.d.ts
 /data/video-cache.json
 /data/rooms.json
 /data/room-submissions.json
+/data/data-sheet-rows.json
+/data/rooms-replay-requests.json
+
+# local agent / editor state
+/.claude/
 

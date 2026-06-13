@@ -2,28 +2,20 @@ import { NextRequest, NextResponse } from "next/server";
 import { registerPlayerHeartbeat, loadRoomSubmissions, loadReplayRequests } from "@/lib/rooms";
 import { getPromptById } from "@/lib/booth-prompts";
 
-// POST /api/rooms/heartbeat - Heartbeat check for players in a room
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const { roomId, playerName } = body as { roomId?: string; playerName?: string };
 
     if (!roomId || !playerName?.trim()) {
-      return NextResponse.json(
-        { error: "roomId and playerName required" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "roomId and playerName required" }, { status: 400 });
     }
 
     const room = await registerPlayerHeartbeat(roomId, playerName.trim());
     if (!room) {
-      return NextResponse.json(
-        { error: "Room not found or full" },
-        { status: 404 }
-      );
+      return NextResponse.json({ error: "Room not found or full" }, { status: 404 });
     }
 
-    // Get active challenge details
     let challengeDetails = null;
     if (room.activeChallengeId) {
       const challenge = getPromptById(room.activeChallengeId);
@@ -37,19 +29,23 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Get submissions for local leaderboard
     const submissions = await loadRoomSubmissions(roomId);
     const replayRequests = await loadReplayRequests(roomId);
 
-    // Form list of active players and whether they've submitted
     const activePlayersStatus = room.players.map(p => {
       const sub = submissions.find(s => s.playerName.toLowerCase() === p.playerName.toLowerCase());
       return {
         playerName: p.playerName,
         hasSubmitted: !!sub,
         score: sub ? sub.score : null,
-        points: sub ? sub.points : null
+        normalizedScore: sub ? sub.normalizedScore : null,
       };
+    });
+
+    // Sort submissions: normalizedScore DESC, timeTakenToPrompt ASC
+    const sortedSubs = [...submissions].sort((a, b) => {
+      if (b.normalizedScore !== a.normalizedScore) return b.normalizedScore - a.normalizedScore;
+      return a.timeTakenToPrompt - b.timeTakenToPrompt;
     });
 
     return NextResponse.json({
@@ -59,8 +55,8 @@ export async function POST(req: NextRequest) {
       activeChallengeId: room.activeChallengeId,
       challengeDetails,
       players: activePlayersStatus,
-      submissions: submissions.sort((a, b) => b.points - a.points),
-      replayRequests: replayRequests.sort((a, b) => a.timestamp - b.timestamp)
+      submissions: sortedSubs,
+      replayRequests: replayRequests.sort((a, b) => a.timestamp - b.timestamp),
     });
   } catch (err) {
     console.error("Room heartbeat error:", err);

@@ -29,6 +29,10 @@ export async function GET() {
         activePlayersCount: room.players?.length || 0,
         activeChallengeId: room.activeChallengeId,
         challengeDetails,
+        // Slot occupancy: index = slot number (0-based), value = playerName or null
+        slots: Array.from({ length: room.maxUsers }, (_, i) =>
+          room.players?.[i]?.playerName ?? null
+        ),
       };
     });
 

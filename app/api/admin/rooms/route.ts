@@ -2,9 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { isAdminPasswordValid } from "@/lib/admin-auth";
 import {
   loadRooms,
-  createRoom,
   updateRoomChallenge,
-  deleteRoom,
+  updateRoomMaxUsers,
   loadRoomSubmissions,
   loadReplayRequests,
   clearReplayRequests,
@@ -21,11 +20,7 @@ function buildChallengeDetails(activeChallengeId: string | null) {
   if (!activeChallengeId) return null;
   const challenge = getPromptById(activeChallengeId);
   if (!challenge) return null;
-  // Challenge videos are committed to git as /public/videos/{id}.mp4 and served
-  // as static assets on Netlify. data/video-cache.json is gitignored so we
-  // never rely on it — just construct the URL directly.
-  const videoUrl = `/videos/${challenge.id}.mp4`;
-  return { id: challenge.id, theme: challenge.theme, difficulty: challenge.difficulty, videoUrl };
+  return { id: challenge.id, theme: challenge.theme, difficulty: challenge.difficulty, videoUrl: `/videos/${challenge.id}.mp4` };
 }
 
 async function enrichRooms(rooms: Awaited<ReturnType<typeof loadRooms>>) {
@@ -37,7 +32,11 @@ async function enrichRooms(rooms: Awaited<ReturnType<typeof loadRooms>>) {
         ...room,
         challengeDetails: buildChallengeDetails(room.activeChallengeId),
         submissionCount: submissions.length,
-        submissions: submissions.sort((a, b) => b.points - a.points),
+        submissions: submissions.sort((a, b) =>
+          b.normalizedScore !== a.normalizedScore
+            ? b.normalizedScore - a.normalizedScore
+            : a.timeTakenToPrompt - b.timeTakenToPrompt
+        ),
         replayRequests: replayRequests.sort((a, b) => a.timestamp - b.timestamp),
       };
     })
@@ -55,20 +54,6 @@ export async function GET(req: NextRequest) {
   }
 }
 
-export async function POST(req: NextRequest) {
-  if (!checkAuth(req)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  try {
-    const body = await req.json();
-    const { name, maxUsers } = body as { name?: string; maxUsers?: number };
-    if (!name?.trim()) return NextResponse.json({ error: "Room name required" }, { status: 400 });
-    const rooms = await createRoom(name.trim(), maxUsers || 4);
-    return NextResponse.json(await enrichRooms(rooms));
-  } catch (err) {
-    console.error("Admin rooms POST error:", err);
-    return NextResponse.json({ error: "Failed to create room" }, { status: 500 });
-  }
-}
-
 export async function PUT(req: NextRequest) {
   if (!checkAuth(req)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   try {
@@ -78,9 +63,9 @@ export async function PUT(req: NextRequest) {
     if (!id) return NextResponse.json({ error: "Room ID required" }, { status: 400 });
     const room = await updateRoomChallenge(id, challengeId);
     if (!room) return NextResponse.json({ error: "Room not found" }, { status: 404 });
-    // Setting a new challenge resolves any pending "play again" requests.
     await clearReplayRequests(id);
-    return NextResponse.json(room);
+    const rooms = await loadRooms();
+    return NextResponse.json(await enrichRooms(rooms));
   } catch (err) {
     console.error("Admin rooms PUT error:", err);
     return NextResponse.json({ error: "Failed to update room" }, { status: 500 });
@@ -88,13 +73,14 @@ export async function PUT(req: NextRequest) {
 }
 
 // PATCH /api/admin/rooms?id=ROOM — operational actions on a room.
-// body: { action: "reset-scores" | "clear-requests" | "assign-random" }
+// body: { action: "reset-scores" | "clear-requests" | "assign-random" | "update-max-users", maxUsers?: number }
 export async function PATCH(req: NextRequest) {
   if (!checkAuth(req)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   try {
     const id = req.nextUrl.searchParams.get("id");
     if (!id) return NextResponse.json({ error: "Room ID required" }, { status: 400 });
-    const { action } = (await req.json()) as { action?: string };
+    const body = (await req.json()) as { action?: string; maxUsers?: number };
+    const { action } = body;
 
     if (action === "reset-scores") {
       await clearRoomSubmissions(id);
@@ -105,6 +91,10 @@ export async function PATCH(req: NextRequest) {
       const pick = getRandomPrompt();
       await updateRoomChallenge(id, pick.id);
       await clearReplayRequests(id);
+    } else if (action === "update-max-users") {
+      const max = Number(body.maxUsers);
+      if (isNaN(max) || max < 1) return NextResponse.json({ error: "Invalid maxUsers" }, { status: 400 });
+      await updateRoomMaxUsers(id, max);
     } else {
       return NextResponse.json({ error: "Unknown action" }, { status: 400 });
     }
@@ -114,18 +104,5 @@ export async function PATCH(req: NextRequest) {
   } catch (err) {
     console.error("Admin rooms PATCH error:", err);
     return NextResponse.json({ error: "Failed to update room" }, { status: 500 });
-  }
-}
-
-export async function DELETE(req: NextRequest) {
-  if (!checkAuth(req)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  try {
-    const id = req.nextUrl.searchParams.get("id");
-    if (!id) return NextResponse.json({ error: "Room ID required" }, { status: 400 });
-    const rooms = await deleteRoom(id);
-    return NextResponse.json(rooms);
-  } catch (err) {
-    console.error("Admin rooms DELETE error:", err);
-    return NextResponse.json({ error: "Failed to delete room" }, { status: 500 });
   }
 }

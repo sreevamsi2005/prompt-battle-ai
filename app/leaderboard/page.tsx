@@ -39,19 +39,24 @@ export default function LeaderboardPage() {
         const res = await fetch(url);
         const data = (await res.json()) as LeaderboardEntry[];
 
-        // Only merge with mock entries when viewing the global leaderboard
+        const sortByScore = (arr: LeaderboardEntry[]) =>
+          [...arr].sort((a, b) =>
+            b.normalizedScore !== a.normalizedScore
+              ? b.normalizedScore - a.normalizedScore
+              : a.timeTakenToPrompt - b.timeTakenToPrompt
+          );
+
         if (filterRoomId === "global") {
           const mock = getMockLeaderboard();
           const merged = [...data];
           for (const m of mock) {
-            if (!merged.some(e => e.playerName === m.playerName && e.score === m.score)) {
+            if (!merged.some(e => e.playerName === m.playerName && e.normalizedScore === m.normalizedScore)) {
               merged.push(m);
             }
           }
-          merged.sort((a, b) => b.score - a.score);
-          setEntries(merged);
+          setEntries(sortByScore(merged));
         } else {
-          setEntries(data.sort((a, b) => b.score - a.score));
+          setEntries(sortByScore(data));
         }
       } catch (err) {
         console.error("Failed to load leaderboard data:", err);

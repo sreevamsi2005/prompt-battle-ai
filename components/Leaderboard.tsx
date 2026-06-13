@@ -66,11 +66,13 @@ export default function Leaderboard({ entries, highlightPlayer }: LeaderboardPro
                   <h3 className="text-sm sm:text-base font-bold text-white truncate">
                     {entry.playerName}
                   </h3>
-                  <div className="flex items-baseline gap-1 mt-1.5">
+                  <div className="flex items-baseline gap-2 mt-1.5">
                     <span className="text-3xl font-extrabold tracking-tight text-[#0066FF] font-mono">
-                      {entry.score}
+                      {entry.normalizedScore}
                     </span>
-                    <span className="text-xs text-zinc-500 font-mono font-semibold">pts</span>
+                    <span className="text-xs text-zinc-500 font-mono font-semibold">norm</span>
+                    <span className="text-base font-bold text-zinc-400 font-mono ml-2">{entry.similarityScore}</span>
+                    <span className="text-xs text-zinc-600 font-mono font-semibold">sim</span>
                   </div>
                   <p className="text-[10px] text-zinc-500 font-mono mt-2 border-t border-zinc-900 pt-2">
                     {formatTime(entry.timestamp)}
@@ -112,9 +114,15 @@ export default function Leaderboard({ entries, highlightPlayer }: LeaderboardPro
                     </p>
                   </div>
                 </div>
-                <div className="flex items-baseline gap-1">
-                  <span className="text-base font-extrabold text-zinc-200 font-mono">{entry.score}</span>
-                  <span className="text-xs text-zinc-500 font-mono font-semibold">pts</span>
+                <div className="flex items-center gap-3">
+                  <div className="flex items-baseline gap-1">
+                    <span className="text-base font-extrabold text-[#0066FF] font-mono">{entry.normalizedScore}</span>
+                    <span className="text-xs text-zinc-500 font-mono font-semibold">norm</span>
+                  </div>
+                  <div className="flex items-baseline gap-1">
+                    <span className="text-sm font-bold text-zinc-400 font-mono">{entry.similarityScore}</span>
+                    <span className="text-xs text-zinc-600 font-mono font-semibold">sim</span>
+                  </div>
                 </div>
               </motion.div>
             );

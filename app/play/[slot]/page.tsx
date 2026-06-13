@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { formatApiError } from "@/lib/error-stage";
-import { computePoints } from "@/lib/points";
+import { computeNormalizedScore } from "@/lib/scoring";
 
 type Phase = "setup" | "waiting" | "playing" | "generating" | "results";
 type VoiceStatus = "idle" | "recording" | "processing";
@@ -37,7 +37,10 @@ interface UserVideo {
 interface RoomStanding {
   playerName: string;
   score: number;
-  points: number;
+  normalizedScore: number;
+  videoScore?: number;
+  compositeScore?: number;
+  timeTakenToPrompt: number;
 }
 
 const DIFFICULTY_STYLE = {
@@ -94,6 +97,35 @@ function ChallengeVideo({ src }: { src: string }) {
   );
 }
 
+function ChallengeTimer({ timeLeft }: { timeLeft: number }) {
+  const danger = timeLeft <= 10;
+  if (timeLeft <= 0) {
+    return (
+      <div className="flex items-center gap-2 rounded border border-rose-500/60 bg-rose-500/20 px-3 py-1.5 animate-pulse">
+        <span className="text-xs font-bold text-rose-400 font-mono uppercase tracking-wider">TIME UP</span>
+      </div>
+    );
+  }
+  return (
+    <div className={`flex items-center gap-2 rounded border px-3 py-1.5 transition-all ${danger ? "border-rose-500/60 bg-rose-500/15 animate-pulse" : "border-zinc-700 bg-zinc-950"}`}>
+      {danger && (
+        <span className="relative flex h-2 w-2 flex-shrink-0">
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-rose-500 opacity-75" />
+          <span className="relative inline-flex h-2 w-2 rounded-full bg-rose-500" />
+        </span>
+      )}
+      {danger && (
+        <svg className="h-3.5 w-3.5 text-rose-400 flex-shrink-0" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M12 2L2 20h20L12 2zm0 3.5L19.5 19h-15L12 5.5zM11 10v4h2v-4h-2zm0 5v2h2v-2h-2z" />
+        </svg>
+      )}
+      <span className={`text-sm font-bold font-mono tabular-nums ${danger ? "text-rose-400" : "text-zinc-300"}`}>
+        {String(Math.floor(timeLeft / 60)).padStart(2, "0")}:{String(timeLeft % 60).padStart(2, "0")}
+      </span>
+    </div>
+  );
+}
+
 export default function PlayerSlotPage() {
   const params = useParams();
   const slotNum = parseInt(params.slot as string, 10);
@@ -113,10 +145,12 @@ export default function PlayerSlotPage() {
   const [claiming, setClaiming] = useState(false);
   const [slotTakenBy, setSlotTakenBy] = useState<string | null>(null);
   const [requestId, setRequestId] = useState<string | null>(null);
-  const [pointsEarned, setPointsEarned] = useState<number | null>(null);
+  const [normalizedScoreEarned, setNormalizedScoreEarned] = useState<number | null>(null);
   const [standings, setStandings] = useState<RoomStanding[]>([]);
+  const [videoScore, setVideoScore] = useState<number | null>(null);
   const [replayRequested, setReplayRequested] = useState(false);
   const [goingGlobal, setGoingGlobal] = useState(false);
+  const [timeLeft, setTimeLeft] = useState<number | null>(null);
 
   const router = useRouter();
 
@@ -127,7 +161,20 @@ export default function PlayerSlotPage() {
   const audioChunksRef = useRef<Blob[]>([]);
   const voiceFinalRef = useRef<string>("");
   const deviceIdRef = useRef<string>("");
-  const pollCtxRef = useRef<{ score: ScoreResult; points: number; playerName: string; roomId: string; prompt: string } | null>(null);
+  const challengeStartTimeRef = useRef<number | null>(null);
+  const pollCtxRef = useRef<{
+    score: ScoreResult;
+    normalizedScore: number;
+    timeTakenToPrompt: number;
+    playerName: string;
+    roomId: string;
+    prompt: string;
+    submissionTimestamp: number;
+    challengeId: string;
+    email: string;
+    videoTag: string;
+    difficulty: "easy" | "medium" | "hard";
+  } | null>(null);
 
   // Generate a stable device ID per browser tab
   useEffect(() => {
@@ -186,9 +233,11 @@ export default function PlayerSlotPage() {
           setPrompt("");
           setUserVideo(null);
           setResult(null);
-          setPointsEarned(null);
+          setNormalizedScoreEarned(null);
+          setVideoScore(null);
           setReplayRequested(false);
           setError(null);
+          challengeStartTimeRef.current = Date.now();
           setPhase("playing");
         }
       } catch (e) {
@@ -199,6 +248,24 @@ export default function PlayerSlotPage() {
     const t = setInterval(poll, 3000);
     return () => clearInterval(t);
   }, [phase, slotNum]);
+
+  // 60-second challenge timer
+  useEffect(() => {
+    if (phase !== "playing") {
+      setTimeLeft(null);
+      return;
+    }
+    if (challengeStartTimeRef.current === null) {
+      challengeStartTimeRef.current = Date.now();
+    }
+    const tick = () => {
+      const elapsed = Math.floor((Date.now() - (challengeStartTimeRef.current ?? Date.now())) / 1000);
+      setTimeLeft(Math.max(0, 60 - elapsed));
+    };
+    tick();
+    const t = setInterval(tick, 1000);
+    return () => clearInterval(t);
+  }, [phase]);
 
   // Voice-to-text: live via Web Speech API + accurate final via Whisper
   const startVoice = async () => {
@@ -301,17 +368,30 @@ export default function PlayerSlotPage() {
 
     const finish = async (videoUrl: string | null) => {
       if (cancelled || !pollCtxRef.current) return;
-      const { score, points, playerName: name, roomId } = pollCtxRef.current;
+      const { score, normalizedScore, timeTakenToPrompt, playerName: name, roomId, submissionTimestamp, prompt: p, challengeId, email, videoTag, difficulty } = pollCtxRef.current;
       try {
         await fetch("/api/leaderboard", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ scope: "room", playerName: name, similarity: score.score, points, roomId }),
+          body: JSON.stringify({
+            scope: "room",
+            playerName: name,
+            similarityScore: score.score,
+            normalizedScore,
+            timeTakenToPrompt,
+            roomId,
+            timestamp: submissionTimestamp,
+            prompt: p,
+            email,
+            challengeId,
+            videoTag,
+            difficulty,
+          }),
         });
       } catch {}
       if (videoUrl) setUserVideo({ videoUrl });
       setResult(score);
-      setPointsEarned(points);
+      setNormalizedScoreEarned(normalizedScore);
       setRequestId(null);
       setPhase("results");
     };
@@ -323,6 +403,25 @@ export default function PlayerSlotPage() {
         const data = await res.json();
         if (data.status === "COMPLETED") {
           await finish(data.videoUrl);
+          // Trigger video similarity analysis from client (avoids server-to-server port issues)
+          const ctx = pollCtxRef.current;
+          if (data.videoUrl && ctx?.challengeId) {
+            fetch("/api/video-similarity", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                challengeId: ctx.challengeId,
+                userVideoUrl: data.videoUrl,
+                textScore: ctx.score.score,
+                roomId: ctx.roomId,
+                playerName: ctx.playerName,
+                submissionTimestamp: ctx.submissionTimestamp,
+              }),
+            })
+            .then(r => r.json())
+            .then(vsResult => { if (vsResult.videoScore != null) setVideoScore(vsResult.videoScore); })
+            .catch(() => {});
+          }
         } else if (data.status === "FAILED" || data.error) {
           setError(formatApiError(data, "Video generation failed."));
           await finish(null);
@@ -346,7 +445,12 @@ export default function PlayerSlotPage() {
         const res = await fetch(`/api/leaderboard?roomId=${room.id}`);
         if (!res.ok) return;
         const data: RoomStanding[] = await res.json();
-        if (!cancelled) setStandings(data);
+        if (!cancelled) {
+          setStandings(data);
+          const myName = (playerName.trim() || `Player ${slotNum}`).toLowerCase();
+          const mine = data.find(s => s.playerName.toLowerCase() === myName);
+          if (mine?.videoScore != null) setVideoScore(mine.videoScore);
+        }
       } catch {}
     };
     load();
@@ -369,15 +473,23 @@ export default function PlayerSlotPage() {
     }
   };
 
-  // Publish this round's points to the global leaderboard, then open it.
+  // Publish this round's score to the global leaderboard, then open it.
   const goToGlobalLeaderboard = async () => {
     if (goingGlobal) return;
     setGoingGlobal(true);
+    const ctx = pollCtxRef.current;
     try {
       await fetch("/api/leaderboard", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ scope: "global", playerName: playerName.trim() || `Player ${slotNum}`, points: pointsEarned ?? 0 }),
+        body: JSON.stringify({
+          scope: "global",
+          playerName: playerName.trim() || `Player ${slotNum}`,
+          similarityScore: ctx?.score.score ?? 0,
+          normalizedScore: ctx?.normalizedScore ?? normalizedScoreEarned ?? 0,
+          timeTakenToPrompt: ctx?.timeTakenToPrompt ?? 60,
+          email: ctx?.email ?? playerEmail,
+        }),
       });
     } catch {}
     router.push("/leaderboard");
@@ -398,8 +510,27 @@ export default function PlayerSlotPage() {
       if (!scoreRes.ok) throw new Error(formatApiError(scoreData as any, "Scoring failed."));
 
       const name = playerName.trim() || `Player ${slotNum}`;
-      const points = computePoints(room.challengeDetails.difficulty, scoreData.score);
-      pollCtxRef.current = { score: scoreData, points, playerName: name, roomId: room.id, prompt: prompt.trim() };
+      const elapsedSec = challengeStartTimeRef.current
+        ? Math.floor((Date.now() - challengeStartTimeRef.current) / 1000)
+        : 60;
+      const timeTakenToPrompt = Math.min(elapsedSec, 60);
+      const normalizedScore = computeNormalizedScore(scoreData.score, room.challengeDetails.difficulty);
+      const submissionTimestamp = Date.now();
+      const videoTag = room.challengeDetails.theme ?? room.challengeDetails.challengeId;
+
+      pollCtxRef.current = {
+        score: scoreData,
+        normalizedScore,
+        timeTakenToPrompt,
+        playerName: name,
+        roomId: room.id,
+        prompt: prompt.trim(),
+        submissionTimestamp,
+        challengeId: room.challengeDetails.challengeId,
+        email: playerEmail,
+        videoTag,
+        difficulty: room.challengeDetails.difficulty,
+      };
 
       if (!genData.requestId) {
         // No FAL_KEY or submit failed — skip video, go straight to results
@@ -409,10 +540,23 @@ export default function PlayerSlotPage() {
         await fetch("/api/leaderboard", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ scope: "room", playerName: name, similarity: scoreData.score, points, roomId: room.id }),
+          body: JSON.stringify({
+            scope: "room",
+            playerName: name,
+            similarityScore: scoreData.score,
+            normalizedScore,
+            timeTakenToPrompt,
+            roomId: room.id,
+            timestamp: submissionTimestamp,
+            prompt: prompt.trim(),
+            email: playerEmail,
+            challengeId: room.challengeDetails.challengeId,
+            videoTag,
+            difficulty: room.challengeDetails.difficulty,
+          }),
         });
         setResult(scoreData);
-        setPointsEarned(points);
+        setNormalizedScoreEarned(normalizedScore);
         setPhase("results");
       } else {
         setRequestId(genData.requestId);
@@ -458,12 +602,17 @@ export default function PlayerSlotPage() {
               </span>
             )}
           </div>
-          {phase !== "setup" && playerName && (
-            <div className="flex items-center gap-3 rounded border border-zinc-700 bg-zinc-950 px-3 py-1.5">
-              <span className="text-xs text-zinc-500 font-mono">Player:</span>
-              <span className="text-xs font-bold text-white font-mono">{playerName}</span>
-            </div>
-          )}
+          <div className="flex items-center gap-3">
+            {phase === "playing" && timeLeft !== null && (
+              <ChallengeTimer timeLeft={timeLeft} />
+            )}
+            {phase !== "setup" && playerName && (
+              <div className="flex items-center gap-3 rounded border border-zinc-700 bg-zinc-950 px-3 py-1.5">
+                <span className="text-xs text-zinc-500 font-mono">Player:</span>
+                <span className="text-xs font-bold text-white font-mono">{playerName}</span>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Main area */}
@@ -543,7 +692,7 @@ export default function PlayerSlotPage() {
               <motion.div key="playing" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="grid gap-4 flex-1 min-h-0 lg:grid-cols-[1fr_420px]">
 
                 {/* LEFT: Video */}
-                <div className="relative min-h-[280px] lg:min-h-0 flex-1">
+                <div className={`relative min-h-[280px] lg:min-h-0 flex-1 rounded-lg transition-all ${timeLeft !== null && timeLeft <= 10 ? "ring-2 ring-rose-500/70 ring-offset-2 ring-offset-black" : ""}`}>
                   <ChallengeVideo src={room.challengeDetails.videoUrl} />
                 </div>
 
@@ -653,25 +802,61 @@ export default function PlayerSlotPage() {
                     {error} — your score is still recorded.
                   </div>
                 )}
-                {/* Score */}
-                <div className="graphite-card p-5 flex items-center gap-5">
-                  <div className="relative flex-shrink-0 h-20 w-20 flex items-center justify-center">
-                    <svg className="h-20 w-20 -rotate-90" viewBox="0 0 36 36">
-                      <circle cx="18" cy="18" r="16" fill="none" stroke="#27272a" strokeWidth="2.5" />
-                      <motion.circle cx="18" cy="18" r="16" fill="none" stroke="#0066FF" strokeWidth="2.5" strokeLinecap="round" initial={{ strokeDasharray: "0 100" }} animate={{ strokeDasharray: `${result.score} 100` }} transition={{ duration: 1.2, ease: "easeOut" }} />
-                    </svg>
-                    <span className="absolute text-xl font-bold tracking-tight text-white font-mono">{result.score}</span>
-                  </div>
-                  <div className="flex-1">
-                    <p className="text-sm font-bold text-white">{result.score >= 80 ? "Superb Alignment" : result.score >= 50 ? "Moderate Resonance" : "Semantic Deviation"}</p>
-                    <p className="mt-1 text-xs leading-relaxed text-zinc-400">{result.feedback}</p>
-                  </div>
-                  {pointsEarned !== null && (
-                    <div className="flex-shrink-0 text-center rounded-lg border border-[#0066FF]/30 bg-[#0066FF]/10 px-4 py-3">
-                      <p className="text-2xl font-bold text-[#0066FF] font-mono leading-none">+{pointsEarned}</p>
-                      <p className="mt-1 text-[10px] uppercase font-bold tracking-wider text-zinc-500 font-mono">points</p>
+                {/* Score breakdown */}
+                <div className="graphite-card p-4 space-y-3">
+                  <div className="grid grid-cols-3 gap-3">
+                    {/* Prompt score */}
+                    <div className="flex flex-col items-center gap-2 rounded-lg border border-zinc-800 bg-black/40 px-3 py-3">
+                      <p className="text-[10px] uppercase font-bold tracking-wider text-zinc-500 font-mono">Prompt Match</p>
+                      <div className="relative h-14 w-14 flex items-center justify-center">
+                        <svg className="h-14 w-14 -rotate-90" viewBox="0 0 36 36">
+                          <circle cx="18" cy="18" r="16" fill="none" stroke="#27272a" strokeWidth="2.5" />
+                          <motion.circle cx="18" cy="18" r="16" fill="none" stroke="#0066FF" strokeWidth="2.5" strokeLinecap="round" initial={{ strokeDasharray: "0 100" }} animate={{ strokeDasharray: `${result.score} 100` }} transition={{ duration: 1.2, ease: "easeOut" }} />
+                        </svg>
+                        <span className="absolute text-sm font-bold text-white font-mono">{result.score}</span>
+                      </div>
+                      <p className="text-[10px] text-zinc-500 font-mono text-center">text similarity</p>
                     </div>
-                  )}
+                    {/* Video score */}
+                    <div className="flex flex-col items-center gap-2 rounded-lg border border-zinc-800 bg-black/40 px-3 py-3">
+                      <p className="text-[10px] uppercase font-bold tracking-wider text-zinc-500 font-mono">Visual Match</p>
+                      <div className="relative h-14 w-14 flex items-center justify-center">
+                        <svg className="h-14 w-14 -rotate-90" viewBox="0 0 36 36">
+                          <circle cx="18" cy="18" r="16" fill="none" stroke="#27272a" strokeWidth="2.5" />
+                          {videoScore != null && (
+                            <motion.circle cx="18" cy="18" r="16" fill="none" stroke="#8b5cf6" strokeWidth="2.5" strokeLinecap="round" initial={{ strokeDasharray: "0 100" }} animate={{ strokeDasharray: `${videoScore} 100` }} transition={{ duration: 1.2, ease: "easeOut" }} />
+                          )}
+                        </svg>
+                        {videoScore != null ? (
+                          <span className="absolute text-sm font-bold text-white font-mono">{videoScore}</span>
+                        ) : (
+                          <span className="absolute text-xs font-bold text-zinc-600 font-mono animate-pulse">…</span>
+                        )}
+                      </div>
+                      <p className="text-[10px] text-zinc-500 font-mono text-center">video similarity</p>
+                    </div>
+                    {/* Normalized score */}
+                    {(() => {
+                      const final = videoScore != null ? Math.round(result.score * 0.5 + videoScore * 0.5) : result.score;
+                      return (
+                        <div className="flex flex-col items-center gap-2 rounded-lg border border-[#0066FF]/30 bg-[#0066FF]/8 px-3 py-3">
+                          <p className="text-[10px] uppercase font-bold tracking-wider text-[#0066FF]/70 font-mono">Final Score</p>
+                          <div className="relative h-14 w-14 flex items-center justify-center">
+                            <svg className="h-14 w-14 -rotate-90" viewBox="0 0 36 36">
+                              <circle cx="18" cy="18" r="16" fill="none" stroke="#27272a" strokeWidth="2.5" />
+                              <motion.circle cx="18" cy="18" r="16" fill="none" stroke="#0066FF" strokeWidth="2.5" strokeLinecap="round" initial={{ strokeDasharray: "0 100" }} animate={{ strokeDasharray: `${final} 100` }} transition={{ duration: 1.2, ease: "easeOut" }} />
+                            </svg>
+                            <span className="absolute text-sm font-bold text-white font-mono">{final}</span>
+                          </div>
+                          <p className="text-[10px] text-[#0066FF]/60 font-mono text-center">{videoScore != null ? "composite" : "text only"}</p>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                  {/* Feedback row */}
+                  <div className="pt-1 border-t border-zinc-900">
+                    <p className="text-xs leading-relaxed text-zinc-400">{result.feedback}</p>
+                  </div>
                 </div>
 
                 {/* Side-by-side videos */}
@@ -704,7 +889,10 @@ export default function PlayerSlotPage() {
                               <span className="w-5 text-center font-mono font-bold text-zinc-600">{idx + 1}</span>
                               <span className="truncate">{s.playerName}</span>
                             </div>
-                            <span className="font-mono text-[#0066FF] font-bold flex-shrink-0">{s.points} pts</span>
+                            <div className="flex items-center gap-3 flex-shrink-0">
+                              <span className="font-mono text-zinc-400 text-xs">{s.score} sim</span>
+                              <span className="font-mono text-[#0066FF] font-bold">{s.normalizedScore} norm</span>
+                            </div>
                           </div>
                         );
                       })

@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import { getPlayerName, setPlayerName } from "@/lib/leaderboard";
 import { formatApiError } from "@/lib/error-stage";
-import { computePoints } from "@/lib/points";
+import { computeNormalizedScore } from "@/lib/scoring";
 import type { ScoreResult, LeaderboardEntry } from "@/lib/types";
 
 /* ─── Types ─────────────────────────────────────────────────────────────── */
@@ -30,13 +30,14 @@ interface RoomListItem {
   maxUsers: number;
   activePlayersCount: number;
   activeChallengeId: string | null;
+  slots: (string | null)[];  // index = slot (0-based), value = playerName or null
 }
 
 interface RoomPlayerStatus {
   playerName: string;
   hasSubmitted: boolean;
   score: number | null;
-  points: number | null;
+  normalizedScore: number | null;
 }
 
 interface RoomState {
@@ -46,7 +47,7 @@ interface RoomState {
   activeChallengeId: string | null;
   challengeDetails: Challenge | null;
   players: RoomPlayerStatus[];
-  submissions: { playerName: string; score: number; points: number; timestamp: number }[];
+  submissions: { playerName: string; score: number; normalizedScore: number; videoScore?: number; compositeScore?: number; timeTakenToPrompt: number; timestamp: number }[];
 }
 
 /* ─── Constants ─────────────────────────────────────────────────────────── */
@@ -268,6 +269,38 @@ function ScorePanel({ score, feedback }: { score: number; feedback: string }) {
   );
 }
 
+/* ─── Challenge Timer ────────────────────────────────────────────────────── */
+function ChallengeTimer({ seconds }: { seconds: number | null }) {
+  if (seconds === null) return null;
+  const danger = seconds > 0 && seconds <= 10;
+  const expired = seconds === 0;
+
+  return (
+    <div className={`relative flex items-center gap-2 rounded border px-3 py-1.5 font-mono text-sm font-bold transition-all select-none ${
+      expired   ? "border-rose-800/50 bg-rose-950/40 text-rose-700" :
+      danger    ? "border-rose-500/70 bg-rose-500/15 text-rose-300 animate-pulse" :
+                  "border-zinc-700 bg-zinc-900/80 text-zinc-200"
+    }`}>
+      {danger && !expired && (
+        <span className="absolute -top-1 -right-1 flex h-2.5 w-2.5">
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-rose-500 opacity-75" />
+          <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-rose-500" />
+        </span>
+      )}
+      {danger && !expired && <span className="text-xs">⚠</span>}
+      <svg className={`h-3.5 w-3.5 ${danger ? "text-rose-400" : "text-zinc-500"}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+        <circle cx="12" cy="12" r="10" />
+        <polyline points="12 6 12 12 16 14" />
+      </svg>
+      {expired ? (
+        <span className="text-rose-600 font-extrabold tracking-widest text-xs">TIME UP</span>
+      ) : (
+        <span className={danger ? "text-rose-200 font-extrabold text-base" : ""}>{seconds}<span className="text-xs ml-px opacity-60">s</span></span>
+      )}
+    </div>
+  );
+}
+
 /* ─── Main Play page Component ───────────────────────────────────────────── */
 export default function PlayPage() {
   const [phase, setPhase] = useState<Phase>("lobby");
@@ -285,7 +318,8 @@ export default function PlayPage() {
   const [prompt, setPrompt] = useState("");
   const [userVideo, setUserVideo] = useState<UserVideo | null>(null);
   const [result, setResult] = useState<ScoreResult | null>(null);
-  
+  const [videoScore, setVideoScore] = useState<number | null>(null);
+
   // Highscore Lists
   const [globalLeaderboard, setGlobalLeaderboard] = useState<LeaderboardEntry[]>([]);
   
@@ -293,9 +327,10 @@ export default function PlayPage() {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [requestId, setRequestId] = useState<string | null>(null);
-  const [pointsEarned, setPointsEarned] = useState<number | null>(null);
+  const [normalizedScoreEarned, setNormalizedScoreEarned] = useState<number | null>(null);
   const [replayRequested, setReplayRequested] = useState(false);
   const [goingGlobal, setGoingGlobal] = useState(false);
+  const [timeLeft, setTimeLeft] = useState<number | null>(null);
 
   const router = useRouter();
 
@@ -303,12 +338,13 @@ export default function PlayPage() {
 
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const activeChallengeIdRef = useRef<string | null>(null);
+  const challengeStartTimeRef = useRef<number | null>(null);
   const recognitionRef = useRef<any>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const voiceFinalRef = useRef<string>("");
   // Holds score + context needed by the polling effect (avoids stale-closure deps)
-  const pollCtxRef = useRef<{ score: ScoreResult; points: number; playerName: string; roomId: string | null; prompt: string } | null>(null);
+  const pollCtxRef = useRef<{ score: ScoreResult; normalizedScore: number; playerName: string; roomId: string | null; prompt: string; submissionTimestamp: number; challengeId: string; timeTakenToPrompt: number; email: string; videoTag: string; difficulty: "easy" | "medium" | "hard" } | null>(null);
 
   // Load player name on mount
   useEffect(() => {
@@ -353,6 +389,11 @@ export default function PlayPage() {
           const data = (await res.json()) as RoomState;
           setRoomState(data);
 
+          // Extract this player's video score if analysis has completed
+          const myName = playerName.trim().toLowerCase();
+          const mine = data.submissions?.find(s => s.playerName.toLowerCase() === myName);
+          if (mine?.videoScore != null) setVideoScore(mine.videoScore);
+
           // If the challenge ID changed, sync with it!
           if (data.activeChallengeId !== activeChallengeIdRef.current) {
             activeChallengeIdRef.current = data.activeChallengeId;
@@ -363,7 +404,8 @@ export default function PlayPage() {
               setPrompt("");
               setUserVideo(null);
               setResult(null);
-              setPointsEarned(null);
+              setNormalizedScoreEarned(null);
+              setVideoScore(null);
               setReplayRequested(false);
               if (phase !== "playing") {
                 setPhase("playing");
@@ -389,6 +431,24 @@ export default function PlayPage() {
     return () => clearInterval(t);
   }, [selectedRoomId, playerName, phase]);
 
+  // 60-second challenge timer — resets whenever a new challenge is loaded
+  useEffect(() => {
+    if (phase === "playing" && challenge) {
+      setTimeLeft(60);
+      challengeStartTimeRef.current = Date.now();
+      const t = setInterval(() => {
+        setTimeLeft(prev => {
+          if (prev === null || prev <= 1) { clearInterval(t); return 0; }
+          return prev - 1;
+        });
+      }, 1000);
+      return () => clearInterval(t);
+    } else {
+      setTimeLeft(null);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, challenge?.challengeId]);
+
   // Load random challenge (Solo Mode)
   const loadSoloChallenge = async () => {
     if (!isValidEmail(playerEmail)) {
@@ -401,6 +461,8 @@ export default function PlayPage() {
     setPrompt("");
     setUserVideo(null);
     setResult(null);
+    setNormalizedScoreEarned(null);
+    setVideoScore(null);
     setError(null);
     setSelectedRoomId(null);
 
@@ -423,21 +485,32 @@ export default function PlayPage() {
 
     const finish = async (videoUrl: string | null) => {
       if (cancelled || !pollCtxRef.current) return;
-      const { score, points, playerName: name, roomId, prompt: p } = pollCtxRef.current;
-      // In a room, record the submission. Solo runs have no roomId — nothing to
-      // record until the player publishes to the global board from the results.
+      const { score, normalizedScore, playerName: name, roomId, prompt: p, submissionTimestamp, timeTakenToPrompt, email, challengeId, videoTag, difficulty } = pollCtxRef.current;
       if (roomId) {
         try {
           await fetch("/api/leaderboard", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ scope: "room", playerName: name, similarity: score.score, points, roomId }),
+            body: JSON.stringify({
+              scope: "room",
+              playerName: name,
+              similarityScore: score.score,
+              normalizedScore,
+              timeTakenToPrompt,
+              roomId,
+              prompt: p,
+              timestamp: submissionTimestamp,
+              email,
+              challengeId,
+              videoTag,
+              difficulty,
+            }),
           });
         } catch {}
       }
       if (videoUrl) setUserVideo({ videoUrl, promptUsed: p });
       setResult(score);
-      setPointsEarned(points);
+      setNormalizedScoreEarned(normalizedScore);
       setRequestId(null);
       setPhase("results");
     };
@@ -449,6 +522,25 @@ export default function PlayPage() {
         const data = await res.json();
         if (data.status === "COMPLETED") {
           await finish(data.videoUrl);
+          // Trigger video similarity from client (avoids server-to-server port issues)
+          const ctx = pollCtxRef.current;
+          if (data.videoUrl && ctx?.challengeId) {
+            fetch("/api/video-similarity", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                challengeId: ctx.challengeId,
+                userVideoUrl: data.videoUrl,
+                textScore: ctx.score.score,
+                roomId: ctx.roomId ?? "",
+                playerName: ctx.playerName,
+                submissionTimestamp: ctx.submissionTimestamp,
+              }),
+            })
+            .then(r => r.json())
+            .then(vsResult => { if (vsResult.videoScore != null) setVideoScore(vsResult.videoScore); })
+            .catch(() => {});
+          }
         } else if (data.status === "FAILED" || data.error) {
           setError(formatApiError(data, "Video generation failed."));
           await finish(null);
@@ -490,9 +582,25 @@ export default function PlayPage() {
       const scoreData = (await scoreRes.json()) as ScoreResult;
       if (!scoreRes.ok) throw new Error(formatApiError(scoreData as any, "Scoring failed."));
 
-      const points = challenge ? computePoints(challenge.difficulty, scoreData.score) : 0;
-      // Store context for the polling effect to use
-      pollCtxRef.current = { score: scoreData, points, playerName: name, roomId: selectedRoomId, prompt: prompt.trim() };
+      const normalizedScore = challenge ? computeNormalizedScore(scoreData.score, challenge.difficulty) : 0;
+      const submissionTimestamp = Date.now();
+      const timeTakenToPrompt = challengeStartTimeRef.current
+        ? Math.min(60, Math.round((submissionTimestamp - challengeStartTimeRef.current) / 1000))
+        : 60;
+      const videoTag = challenge?.theme ?? "";
+      pollCtxRef.current = {
+        score: scoreData,
+        normalizedScore,
+        playerName: name,
+        roomId: selectedRoomId,
+        prompt: prompt.trim(),
+        submissionTimestamp,
+        challengeId: challenge?.challengeId ?? "",
+        timeTakenToPrompt,
+        email: playerEmail.trim(),
+        videoTag,
+        difficulty: challenge?.difficulty ?? "medium",
+      };
 
       if (!genData.requestId) {
         // No FAL_KEY or submit failed — show results with score only
@@ -504,12 +612,23 @@ export default function PlayPage() {
             await fetch("/api/leaderboard", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ scope: "room", playerName: name, similarity: scoreData.score, points, roomId: selectedRoomId }),
+              body: JSON.stringify({
+                scope: "room",
+                playerName: name,
+                similarityScore: scoreData.score,
+                normalizedScore,
+                timeTakenToPrompt,
+                roomId: selectedRoomId,
+                email: playerEmail.trim(),
+                challengeId: challenge?.challengeId ?? "",
+                videoTag,
+                difficulty: challenge?.difficulty ?? "medium",
+              }),
             });
           } catch {}
         }
         setResult(scoreData);
-        setPointsEarned(points);
+        setNormalizedScoreEarned(normalizedScore);
         setPhase("results");
       } else {
         setRequestId(genData.requestId);
@@ -576,14 +695,38 @@ export default function PlayPage() {
     if (recorderRef.current?.state === "recording") recorderRef.current.stop();
   };
 
-  // Fetch Global leaderboard for display in Results
+  // When results arrive: auto-post score to global leaderboard, then keep polling it
   useEffect(() => {
-    if (phase === "results") {
+    if (phase !== "results" || !result) return;
+    const ctx = pollCtxRef.current;
+
+    const refreshLeaderboard = () =>
       fetch("/api/leaderboard")
-        .then(res => res.json())
+        .then(r => r.json())
         .then(data => setGlobalLeaderboard(data))
-        .catch(err => console.error("Global leaderboard load failed:", err));
-    }
+        .catch(() => {});
+
+    // Post score once on entry, then load the updated list
+    fetch("/api/leaderboard", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        scope: "global",
+        playerName: playerName.trim() || "Anonymous Player",
+        similarityScore: result.score,
+        normalizedScore: normalizedScoreEarned ?? 0,
+        timeTakenToPrompt: ctx?.timeTakenToPrompt ?? 60,
+        email: playerEmail.trim(),
+      }),
+    })
+      .then(r => r.json())
+      .then(data => setGlobalLeaderboard(data))
+      .catch(refreshLeaderboard);
+
+    // Keep refreshing every 4 s so other players' scores appear live
+    const t = setInterval(refreshLeaderboard, 4000);
+    return () => clearInterval(t);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase]);
 
   // Ask the admin (booth operator) to start the next challenge for this room.
@@ -601,17 +744,9 @@ export default function PlayPage() {
     }
   };
 
-  // Publish this round's points to the global leaderboard, then open it.
-  const goToGlobalLeaderboard = async () => {
+  const goToGlobalLeaderboard = () => {
     if (goingGlobal) return;
     setGoingGlobal(true);
-    try {
-      await fetch("/api/leaderboard", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ scope: "global", playerName: playerName.trim() || "Anonymous Player", points: pointsEarned ?? 0 }),
-      });
-    } catch {}
     router.push("/leaderboard");
   };
 
@@ -662,23 +797,28 @@ export default function PlayPage() {
             )}
           </div>
 
-          {/* User Badge */}
-          {phase !== "lobby" && (
-            <div className="flex items-center gap-3 rounded border border-zinc-700 bg-zinc-950 px-3 py-1.5">
-              <span className="text-xs text-zinc-500 font-mono">User:</span>
-              <span className="text-xs font-bold text-white font-mono">{playerName}</span>
-              <button
-                onClick={() => {
-                  setSelectedRoomId(null);
-                  setPhase("lobby");
-                  setChallenge(null);
-                }}
-                className="text-xs text-zinc-400 hover:text-zinc-200 ml-3 border-l border-zinc-800 pl-3 font-medium"
-              >
-                Exit Game
-              </button>
-            </div>
-          )}
+          <div className="flex items-center gap-3">
+            {/* Challenge timer — visible only while playing */}
+            {phase === "playing" && <ChallengeTimer seconds={timeLeft} />}
+
+            {/* User Badge */}
+            {phase !== "lobby" && (
+              <div className="flex items-center gap-3 rounded border border-zinc-700 bg-zinc-950 px-3 py-1.5">
+                <span className="text-xs text-zinc-500 font-mono">User:</span>
+                <span className="text-xs font-bold text-white font-mono">{playerName}</span>
+                <button
+                  onClick={() => {
+                    setSelectedRoomId(null);
+                    setPhase("lobby");
+                    setChallenge(null);
+                  }}
+                  className="text-xs text-zinc-400 hover:text-zinc-200 ml-3 border-l border-zinc-800 pl-3 font-medium"
+                >
+                  Exit Game
+                </button>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* ── MAIN PLAY AREA ──────────────────────────────────────────── */}
@@ -748,8 +888,8 @@ export default function PlayPage() {
                   </div>
                 </motion.div>
 
-                {/* Multiplayer Booth Rooms */}
-                <motion.div 
+                {/* Multiplayer Booth — single room, slot-based join */}
+                <motion.div
                   whileHover={{ rotateY: -5, rotateX: -2, z: 20 }}
                   className="graphite-card p-6 flex flex-col preserve-3d"
                 >
@@ -763,40 +903,89 @@ export default function PlayPage() {
                       <svg className={`h-4 w-4 ${loadingRooms ? "animate-spin" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 8H18.235" />
                       </svg>
-                      Scan Rooms
+                      Refresh
                     </button>
                   </div>
                   <p className="mt-2 text-sm leading-relaxed text-zinc-400">
-                    Join an active battle session controlled by the booth admin.
+                    Join the live battle session — you'll be placed in the first open slot.
                   </p>
 
-                  <div className="mt-5 flex-1 overflow-y-auto max-h-[200px] space-y-2 pr-1">
-                    {rooms.map((room) => (
-                      <div
-                        key={room.id}
-                        className="flex items-center justify-between p-3 rounded border border-zinc-800 bg-[#040405] hover:border-zinc-700 transition"
-                      >
-                        <div>
-                          <p className="text-sm font-semibold text-white">{room.name}</p>
-                          <p className="text-xs text-zinc-500 font-mono mt-1">
-                            Laptops Joined: {room.activePlayersCount} / {room.maxUsers}
-                          </p>
+                  {(() => {
+                    const room = rooms[0];
+                    if (!room && !loadingRooms) {
+                      return (
+                        <div className="mt-5 flex-1 flex items-center justify-center text-center py-8 text-xs text-zinc-500 font-mono border border-dashed border-zinc-800 rounded">
+                          No active battle session detected.<br />Waiting for the booth admin to set one up.
                         </div>
+                      );
+                    }
+                    if (!room) {
+                      return (
+                        <div className="mt-5 flex-1 flex items-center justify-center py-6">
+                          <div className="h-5 w-5 rounded-full border-2 border-[#0066FF] border-t-transparent animate-spin" />
+                        </div>
+                      );
+                    }
+
+                    const firstFreeSlot = room.slots.findIndex(s => s === null);
+                    const isFull = firstFreeSlot === -1;
+
+                    return (
+                      <div className="mt-5 flex flex-col gap-4 flex-1">
+                        {/* Slot grid */}
+                        <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${Math.min(room.maxUsers, 4)}, 1fr)` }}>
+                          {room.slots.map((occupant, idx) => {
+                            const slotNum = idx + 1;
+                            const isOccupied = occupant !== null;
+                            return (
+                              <div
+                                key={idx}
+                                className={`relative flex flex-col items-center justify-center rounded border px-2 py-3 text-center transition ${
+                                  isOccupied
+                                    ? "border-zinc-700 bg-zinc-900/80"
+                                    : "border-dashed border-[#0066FF]/40 bg-[#0066FF]/5"
+                                }`}
+                              >
+                                <span className={`text-[10px] font-bold font-mono uppercase tracking-wider mb-1 ${isOccupied ? "text-zinc-600" : "text-[#0066FF]/60"}`}>
+                                  Slot {slotNum}
+                                </span>
+                                {isOccupied ? (
+                                  <>
+                                    <span className="h-2 w-2 rounded-full bg-emerald-400 mb-1" />
+                                    <span className="text-xs font-semibold text-white font-mono truncate w-full text-center px-1">{occupant}</span>
+                                    <span className="text-[10px] text-zinc-500 font-mono mt-0.5">occupied</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <span className="h-2 w-2 rounded-full bg-[#0066FF]/40 animate-pulse mb-1" />
+                                    <span className="text-xs text-[#0066FF]/70 font-mono">free</span>
+                                  </>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        {/* Join button */}
                         <button
                           onClick={() => handleJoinRoom(room)}
-                          disabled={room.activePlayersCount >= room.maxUsers && !playerName}
-                          className="btn-primary py-1.5 px-4 text-xs font-bold"
+                          disabled={isFull}
+                          className="btn-primary w-full py-2.5 text-sm font-bold disabled:opacity-40 disabled:cursor-not-allowed"
                         >
-                          Join Battle
+                          {isFull
+                            ? `Room Full (${room.maxUsers}/${room.maxUsers})`
+                            : `Join Battle → Slot ${firstFreeSlot + 1}`}
                         </button>
+
+                        {isFull && (
+                          <p className="text-[11px] text-zinc-500 font-mono text-center -mt-2">
+                            All {room.maxUsers} slots taken. Wait for a player to leave or ask the admin to increase capacity.
+                          </p>
+                        )}
                       </div>
-                    ))}
-                    {rooms.length === 0 && !loadingRooms && (
-                      <div className="text-center py-8 text-xs text-zinc-500 font-mono border border-dashed border-zinc-800 rounded">
-                        No active battle sessions detected.<br />Create a room from the admin panel to start.
-                      </div>
-                    )}
-                  </div>
+                    );
+                  })()}
+
                   {error && <p className="text-xs text-rose-400 text-center mt-3 font-semibold">{error}</p>}
                 </motion.div>
               </motion.div>
@@ -1006,22 +1195,62 @@ export default function PlayPage() {
                     {error} — your score is still recorded.
                   </div>
                 )}
-                {/* Result header cards */}
-                <div className="grid gap-4 sm:grid-cols-[1fr_360px]">
-                  <ScorePanel score={result.score} feedback={result.feedback} />
-                  
-                  {/* Prompt reveal summary */}
-                  <div className="graphite-card p-5 flex flex-col justify-between gap-3">
-                    <div>
-                      <p className="text-[10px] uppercase font-bold tracking-wider text-zinc-500 font-mono">Evaluated Prompt</p>
-                      <p className="text-xs sm:text-sm text-zinc-200 leading-relaxed mt-2 italic font-mono">"{prompt}"</p>
-                    </div>
-                    {pointsEarned !== null && (
-                      <div className="flex items-center justify-between rounded-lg border border-[#0066FF]/30 bg-[#0066FF]/10 px-4 py-2.5">
-                        <span className="text-[10px] uppercase font-bold tracking-wider text-zinc-400 font-mono">Points Earned</span>
-                        <span className="text-xl font-bold text-[#0066FF] font-mono">+{pointsEarned}</span>
+                {/* Score breakdown */}
+                <div className="graphite-card p-4 space-y-3">
+                  <div className="grid grid-cols-3 gap-3">
+                    {/* Prompt score */}
+                    <div className="flex flex-col items-center gap-2 rounded-lg border border-zinc-800 bg-black/40 px-3 py-3">
+                      <p className="text-[10px] uppercase font-bold tracking-wider text-zinc-500 font-mono text-center">Prompt Match</p>
+                      <div className="relative h-14 w-14 flex items-center justify-center">
+                        <svg className="h-14 w-14 -rotate-90" viewBox="0 0 36 36">
+                          <circle cx="18" cy="18" r="16" fill="none" stroke="#27272a" strokeWidth="2.5" />
+                          <motion.circle cx="18" cy="18" r="16" fill="none" stroke="#0066FF" strokeWidth="2.5" strokeLinecap="round" initial={{ strokeDasharray: "0 100" }} animate={{ strokeDasharray: `${result.score} 100` }} transition={{ duration: 1.2, ease: "easeOut" }} />
+                        </svg>
+                        <span className="absolute text-sm font-bold text-white font-mono">{result.score}</span>
                       </div>
-                    )}
+                      <p className="text-[10px] text-zinc-500 font-mono text-center">text similarity</p>
+                    </div>
+                    {/* Video score */}
+                    <div className="flex flex-col items-center gap-2 rounded-lg border border-zinc-800 bg-black/40 px-3 py-3">
+                      <p className="text-[10px] uppercase font-bold tracking-wider text-zinc-500 font-mono text-center">Visual Match</p>
+                      <div className="relative h-14 w-14 flex items-center justify-center">
+                        <svg className="h-14 w-14 -rotate-90" viewBox="0 0 36 36">
+                          <circle cx="18" cy="18" r="16" fill="none" stroke="#27272a" strokeWidth="2.5" />
+                          {videoScore != null && (
+                            <motion.circle cx="18" cy="18" r="16" fill="none" stroke="#8b5cf6" strokeWidth="2.5" strokeLinecap="round" initial={{ strokeDasharray: "0 100" }} animate={{ strokeDasharray: `${videoScore} 100` }} transition={{ duration: 1.2, ease: "easeOut" }} />
+                          )}
+                        </svg>
+                        {videoScore != null ? (
+                          <span className="absolute text-sm font-bold text-white font-mono">{videoScore}</span>
+                        ) : (
+                          <span className="absolute text-xs font-bold text-zinc-600 font-mono animate-pulse">…</span>
+                        )}
+                      </div>
+                      <p className="text-[10px] text-zinc-500 font-mono text-center">video similarity</p>
+                    </div>
+                    {/* Final composite */}
+                    {(() => {
+                      const final = videoScore != null ? Math.round(result.score * 0.5 + videoScore * 0.5) : result.score;
+                      return (
+                        <div className="flex flex-col items-center gap-2 rounded-lg border border-[#0066FF]/30 bg-[#0066FF]/8 px-3 py-3">
+                          <p className="text-[10px] uppercase font-bold tracking-wider text-[#0066FF]/70 font-mono text-center">Final Score</p>
+                          <div className="relative h-14 w-14 flex items-center justify-center">
+                            <svg className="h-14 w-14 -rotate-90" viewBox="0 0 36 36">
+                              <circle cx="18" cy="18" r="16" fill="none" stroke="#27272a" strokeWidth="2.5" />
+                              <motion.circle cx="18" cy="18" r="16" fill="none" stroke="#0066FF" strokeWidth="2.5" strokeLinecap="round" initial={{ strokeDasharray: "0 100" }} animate={{ strokeDasharray: `${final} 100` }} transition={{ duration: 1.2, ease: "easeOut" }} />
+                            </svg>
+                            <span className="absolute text-sm font-bold text-white font-mono">{final}</span>
+                          </div>
+                          <p className="text-[10px] text-[#0066FF]/60 font-mono text-center">{videoScore != null ? "composite" : "text only"}</p>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                  {/* Prompt + feedback */}
+                  <div className="rounded border border-zinc-800 bg-black/30 px-3 py-2.5">
+                    <p className="text-[10px] uppercase font-bold text-zinc-600 font-mono mb-1">Your Prompt</p>
+                    <p className="text-xs text-zinc-300 italic font-mono leading-relaxed">{prompt}</p>
+                    <p className="text-xs text-zinc-500 leading-relaxed mt-1">{result.feedback}</p>
                   </div>
                 </div>
 
@@ -1059,7 +1288,7 @@ export default function PlayPage() {
                                 <span className="w-5 text-center font-mono font-bold text-zinc-600">{idx + 1}</span>
                                 <span className="truncate max-w-[150px]">{sub.playerName}</span>
                               </div>
-                              <span className="font-mono text-[#0066FF] font-bold">{sub.points} pts</span>
+                              <span className="font-mono text-[#0066FF] font-bold">{sub.compositeScore ?? sub.score}%</span>
                             </div>
                           );
                         })
@@ -1093,7 +1322,9 @@ export default function PlayPage() {
                               <span className="w-5 text-center font-mono font-bold text-zinc-600">{idx + 1}</span>
                               <span className="truncate max-w-[150px]">{entry.playerName}</span>
                             </div>
-                            <span className="font-mono text-zinc-300">{entry.score}</span>
+                            <div className="flex items-center gap-2 font-mono">
+                              <span className="text-[#0066FF] font-bold">{entry.similarityScore}%</span>
+                            </div>
                           </div>
                         );
                       })}

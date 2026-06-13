@@ -5,16 +5,35 @@ export async function loadLeaderboard(): Promise<LeaderboardEntry[]> {
   return blobGet<LeaderboardEntry[]>("leaderboard", "entries", []);
 }
 
-export async function saveLeaderboard(entries: LeaderboardEntry[]): Promise<void> {
-  const sorted = [...entries].sort((a, b) => b.score - a.score).slice(0, 100);
-  await blobSet("leaderboard", "entries", sorted);
+function sortLeaderboard(entries: LeaderboardEntry[]): LeaderboardEntry[] {
+  return [...entries].sort((a, b) => {
+    if (b.normalizedScore !== a.normalizedScore) return b.normalizedScore - a.normalizedScore;
+    return a.timeTakenToPrompt - b.timeTakenToPrompt;
+  });
 }
 
-export async function addEntry(playerName: string, score: number): Promise<LeaderboardEntry[]> {
-  // Atomic update — concurrent submitters can't drop each other's entries.
+export async function saveLeaderboard(entries: LeaderboardEntry[]): Promise<void> {
+  await blobSet("leaderboard", "entries", sortLeaderboard(entries).slice(0, 100));
+}
+
+export async function addEntry(
+  playerName: string,
+  similarityScore: number,
+  normalizedScore: number,
+  timeTakenToPrompt: number,
+  email?: string
+): Promise<LeaderboardEntry[]> {
   return blobUpdate<LeaderboardEntry[]>("leaderboard", "entries", [], (cur) =>
-    [...cur, { playerName: playerName.trim() || "Booth Player", score, timestamp: Date.now() }]
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 100)
+    sortLeaderboard([
+      ...cur,
+      {
+        playerName: playerName.trim() || "Booth Player",
+        similarityScore,
+        normalizedScore,
+        timeTakenToPrompt,
+        timestamp: Date.now(),
+        ...(email ? { email } : {}),
+      },
+    ]).slice(0, 100)
   );
 }
