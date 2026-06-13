@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { registerPlayerHeartbeat, loadRoomSubmissions, loadReplayRequests } from "@/lib/rooms";
 import { getPromptById } from "@/lib/booth-prompts";
-import { getCachedVideo } from "@/lib/video-cache";
 
 // POST /api/rooms/heartbeat - Heartbeat check for players in a room
 export async function POST(req: NextRequest) {
@@ -29,15 +28,11 @@ export async function POST(req: NextRequest) {
     if (room.activeChallengeId) {
       const challenge = getPromptById(room.activeChallengeId);
       if (challenge) {
-        const cached = getCachedVideo(challenge.id);
-        const videoUrl = cached
-          ? (cached.downloaded ? cached.localPath : (cached.cdnUrl || ""))
-          : "";
         challengeDetails = {
-          id: challenge.id,
+          challengeId: challenge.id,
           theme: challenge.theme,
           difficulty: challenge.difficulty,
-          videoUrl
+          videoUrl: `/videos/${challenge.id}.mp4`,
         };
       }
     }
