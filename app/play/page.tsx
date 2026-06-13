@@ -272,6 +272,8 @@ function ScorePanel({ score, feedback }: { score: number; feedback: string }) {
 export default function PlayPage() {
   const [phase, setPhase] = useState<Phase>("lobby");
   const [playerName, setPlayerNameState] = useState("");
+  const [playerEmail, setPlayerEmail] = useState("");
+  const [emailError, setEmailError] = useState<string | null>(null);
   const [rooms, setRooms] = useState<RoomListItem[]>([]);
   const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null);
   
@@ -389,6 +391,11 @@ export default function PlayPage() {
 
   // Load random challenge (Solo Mode)
   const loadSoloChallenge = async () => {
+    if (!isValidEmail(playerEmail)) {
+      setEmailError("Enter a valid email address.");
+      return;
+    }
+    setEmailError(null);
     setPhase("loading");
     setChallenge(null);
     setPrompt("");
@@ -608,12 +615,19 @@ export default function PlayPage() {
     router.push("/leaderboard");
   };
 
+  const isValidEmail = (v: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim());
+
   // Join Room button click
   const handleJoinRoom = (room: RoomListItem) => {
     if (!playerName.trim()) {
       setError("Please enter your name first.");
       return;
     }
+    if (!isValidEmail(playerEmail)) {
+      setEmailError("Enter a valid email address.");
+      return;
+    }
+    setEmailError(null);
     setError(null);
     setPlayerName(playerName.trim());
     setSelectedRoomId(room.id);
@@ -690,18 +704,33 @@ export default function PlayPage() {
                     <p className="mt-2 text-sm leading-relaxed text-zinc-400">
                       Specify your username below to log your scores on the live leaderboards.
                     </p>
-                    <div className="mt-5">
-                      <label className="block text-xs uppercase font-bold text-zinc-500 font-mono mb-2">
-                        Participant Username
-                      </label>
-                      <input
-                        type="text"
-                        value={playerName}
-                        onChange={(e) => setPlayerNameState(e.target.value)}
-                        placeholder="e.g. CyberRider"
-                        maxLength={18}
-                        className="input-field"
-                      />
+                    <div className="mt-5 space-y-3">
+                      <div>
+                        <label className="block text-xs uppercase font-bold text-zinc-500 font-mono mb-2">
+                          Participant Username
+                        </label>
+                        <input
+                          type="text"
+                          value={playerName}
+                          onChange={(e) => setPlayerNameState(e.target.value)}
+                          placeholder="e.g. CyberRider"
+                          maxLength={18}
+                          className="input-field"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs uppercase font-bold text-zinc-500 font-mono mb-2">
+                          Email Address
+                        </label>
+                        <input
+                          type="email"
+                          value={playerEmail}
+                          onChange={(e) => { setPlayerEmail(e.target.value); setEmailError(null); }}
+                          placeholder="you@example.com"
+                          className="input-field"
+                        />
+                        {emailError && <p className="mt-1.5 text-xs text-rose-400 font-mono">{emailError}</p>}
+                      </div>
                     </div>
                   </div>
 

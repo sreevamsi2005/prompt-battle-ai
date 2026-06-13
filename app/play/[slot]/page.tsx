@@ -101,6 +101,8 @@ export default function PlayerSlotPage() {
 
   const [phase, setPhase] = useState<Phase>("setup");
   const [playerName, setPlayerName] = useState("");
+  const [playerEmail, setPlayerEmail] = useState("");
+  const [emailError, setEmailError] = useState<string | null>(null);
   const [room, setRoom] = useState<RoomInfo | null>(null);
   const [prompt, setPrompt] = useState("");
   const [userVideo, setUserVideo] = useState<UserVideo | null>(null);
@@ -252,9 +254,16 @@ export default function PlayerSlotPage() {
     if (recorderRef.current?.state === "recording") recorderRef.current.stop();
   };
 
+  const isValidEmail = (v: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim());
+
   const handleStart = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!playerName.trim()) return;
+    if (!isValidEmail(playerEmail)) {
+      setEmailError("Enter a valid email address.");
+      return;
+    }
+    setEmailError(null);
     setClaiming(true);
     setSlotTakenBy(null);
     setError(null);
@@ -472,6 +481,17 @@ export default function PlayerSlotPage() {
                     <div>
                       <label className="block text-xs uppercase font-bold text-zinc-500 font-mono mb-2">Your Name</label>
                       <input type="text" value={playerName} onChange={e => { setPlayerName(e.target.value); setSlotTakenBy(null); }} placeholder="e.g. CyberRider" maxLength={18} autoFocus className="input-field" />
+                    </div>
+                    <div>
+                      <label className="block text-xs uppercase font-bold text-zinc-500 font-mono mb-2">Email Address</label>
+                      <input
+                        type="email"
+                        value={playerEmail}
+                        onChange={e => { setPlayerEmail(e.target.value); setEmailError(null); }}
+                        placeholder="you@example.com"
+                        className="input-field"
+                      />
+                      {emailError && <p className="mt-1.5 text-xs text-rose-400 font-mono">{emailError}</p>}
                     </div>
                     {slotTakenBy && (
                       <div className="rounded border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-400 font-semibold text-center">

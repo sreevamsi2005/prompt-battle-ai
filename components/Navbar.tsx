@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion } from "framer-motion";
+import { useAdminAuth } from "@/contexts/admin-auth";
 
 const links = [
   { href: "/", label: "Home" },
@@ -12,6 +13,7 @@ const links = [
 
 export default function Navbar() {
   const pathname = usePathname();
+  const { isAdmin, setIsAdmin } = useAdminAuth();
 
   return (
     <motion.nav
@@ -78,12 +80,21 @@ export default function Navbar() {
             })}
           </div>
 
-          <Link
-            href="/admin"
-            className="rounded border border-zinc-800 bg-[#09090b]/80 hover:bg-zinc-900 hover:text-white px-3 py-1.5 text-xs font-medium text-zinc-300 transition"
-          >
-            Admin Panel
-          </Link>
+          {isAdmin ? (
+            <button
+              onClick={() => setIsAdmin(false)}
+              className="rounded border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 hover:text-white px-3 py-1.5 text-xs font-medium text-zinc-200 transition"
+            >
+              Sign Out
+            </button>
+          ) : (
+            <Link
+              href="/admin"
+              className="rounded border border-zinc-800 bg-[#09090b]/80 hover:bg-zinc-900 hover:text-white px-3 py-1.5 text-xs font-medium text-zinc-300 transition"
+            >
+              Admin Panel
+            </Link>
+          )}
         </div>
       </div>
     </motion.nav>

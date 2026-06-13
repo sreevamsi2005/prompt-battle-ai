@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import Navbar from "@/components/Navbar";
+import { AdminAuthProvider } from "@/contexts/admin-auth";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -30,8 +31,10 @@ export default function RootLayout({
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="grid-bg min-h-full font-sans">
-        <Navbar />
-        <main className="pt-14">{children}</main>
+        <AdminAuthProvider>
+          <Navbar />
+          <main className="pt-14">{children}</main>
+        </AdminAuthProvider>
       </body>
     </html>
   );
