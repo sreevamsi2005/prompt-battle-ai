@@ -352,9 +352,9 @@ export default function PlayPage() {
     if (saved) setPlayerNameState(saved);
   }, []);
 
-  // Fetch available rooms
-  const fetchRooms = async () => {
-    setLoadingRooms(true);
+  // Fetch available rooms. `silent` skips the spinner for background polls.
+  const fetchRooms = async (silent = false) => {
+    if (!silent) setLoadingRooms(true);
     try {
       const res = await fetch("/api/rooms");
       if (res.ok) {
@@ -364,13 +364,15 @@ export default function PlayPage() {
     } catch (e) {
       console.error("Failed to load rooms:", e);
     }
-    setLoadingRooms(false);
+    if (!silent) setLoadingRooms(false);
   };
 
+  // While in the lobby, poll rooms every 3s so slot occupancy stays live.
   useEffect(() => {
-    if (phase === "lobby") {
-      fetchRooms();
-    }
+    if (phase !== "lobby") return;
+    fetchRooms();
+    const t = setInterval(() => fetchRooms(true), 3000);
+    return () => clearInterval(t);
   }, [phase]);
 
   // Sync Room Session Heartbeat
@@ -832,12 +834,12 @@ export default function PlayPage() {
                 initial={{ opacity: 0, scale: 0.98 }}
                 animate={{ opacity: 1, scale: 1 }}
                 exit={{ opacity: 0, scale: 0.98 }}
-                className="perspective-1000 grid gap-6 md:grid-cols-2 max-w-4xl mx-auto w-full my-auto"
+                className="grid gap-6 md:grid-cols-2 max-w-4xl mx-auto w-full my-auto"
               >
                 {/* Name Input & Solo Play */}
-                <motion.div 
-                  whileHover={{ rotateY: 5, rotateX: -2, z: 20 }}
-                  className="graphite-card p-6 flex flex-col justify-between preserve-3d"
+                <motion.div
+                  whileHover={{ y: -3 }}
+                  className="graphite-card p-6 flex flex-col justify-between"
                 >
                   <div>
                     <h2 className="text-lg font-bold text-white tracking-tight">1. Participant Registry</h2>
@@ -890,13 +892,13 @@ export default function PlayPage() {
 
                 {/* Multiplayer Booth — single room, slot-based join */}
                 <motion.div
-                  whileHover={{ rotateY: -5, rotateX: -2, z: 20 }}
-                  className="graphite-card p-6 flex flex-col preserve-3d"
+                  whileHover={{ y: -3 }}
+                  className="graphite-card p-6 flex flex-col"
                 >
                   <div className="flex items-center justify-between">
                     <h2 className="text-lg font-bold text-white tracking-tight">2. Sync Multiplayer</h2>
                     <button
-                      onClick={fetchRooms}
+                      onClick={() => fetchRooms()}
                       disabled={loadingRooms}
                       className="text-xs font-semibold text-zinc-400 hover:text-white flex items-center gap-1.5 transition"
                     >
