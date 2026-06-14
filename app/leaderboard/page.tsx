@@ -12,23 +12,17 @@ interface RoomListItem {
   name: string;
 }
 
-// Normalize entries (coalesce legacy `{score}`-only records so they never render
-// blank) and sort by normalized score desc, then fastest time.
+// Keep only entries on the current schema (they always carry numeric similarity +
+// normalized scores). Legacy `{score}`-only records predate the 0–100 scale and
+// can't be shown correctly, so they're dropped rather than displayed misleadingly.
+// Sort by normalized score desc, then fastest time.
 function normalizeAndSort(arr: LeaderboardEntry[]): LeaderboardEntry[] {
   return arr
-    .map((e) => {
-      const legacy = e as LeaderboardEntry & { score?: number };
-      return {
-        ...e,
-        normalizedScore: e.normalizedScore ?? legacy.score ?? 0,
-        similarityScore: e.similarityScore ?? legacy.score ?? 0,
-        timeTakenToPrompt: e.timeTakenToPrompt ?? 0,
-      };
-    })
+    .filter((e) => typeof e.normalizedScore === "number" && typeof e.similarityScore === "number")
     .sort((a, b) =>
       b.normalizedScore !== a.normalizedScore
         ? b.normalizedScore - a.normalizedScore
-        : a.timeTakenToPrompt - b.timeTakenToPrompt
+        : (a.timeTakenToPrompt ?? 0) - (b.timeTakenToPrompt ?? 0)
     );
 }
 
