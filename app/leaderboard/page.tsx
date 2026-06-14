@@ -4,12 +4,32 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import Leaderboard from "@/components/Leaderboard";
-import { getMockLeaderboard, getPlayerName } from "@/lib/leaderboard";
+import { getPlayerName } from "@/lib/leaderboard";
 import type { LeaderboardEntry } from "@/lib/types";
 
 interface RoomListItem {
   id: string;
   name: string;
+}
+
+// Normalize entries (coalesce legacy `{score}`-only records so they never render
+// blank) and sort by normalized score desc, then fastest time.
+function normalizeAndSort(arr: LeaderboardEntry[]): LeaderboardEntry[] {
+  return arr
+    .map((e) => {
+      const legacy = e as LeaderboardEntry & { score?: number };
+      return {
+        ...e,
+        normalizedScore: e.normalizedScore ?? legacy.score ?? 0,
+        similarityScore: e.similarityScore ?? legacy.score ?? 0,
+        timeTakenToPrompt: e.timeTakenToPrompt ?? 0,
+      };
+    })
+    .sort((a, b) =>
+      b.normalizedScore !== a.normalizedScore
+        ? b.normalizedScore - a.normalizedScore
+        : a.timeTakenToPrompt - b.timeTakenToPrompt
+    );
 }
 
 export default function LeaderboardPage() {
@@ -38,29 +58,10 @@ export default function LeaderboardPage() {
         
         const res = await fetch(url);
         const data = (await res.json()) as LeaderboardEntry[];
-
-        const sortByScore = (arr: LeaderboardEntry[]) =>
-          [...arr].sort((a, b) =>
-            b.normalizedScore !== a.normalizedScore
-              ? b.normalizedScore - a.normalizedScore
-              : a.timeTakenToPrompt - b.timeTakenToPrompt
-          );
-
-        if (filterRoomId === "global") {
-          const mock = getMockLeaderboard();
-          const merged = [...data];
-          for (const m of mock) {
-            if (!merged.some(e => e.playerName === m.playerName && e.normalizedScore === m.normalizedScore)) {
-              merged.push(m);
-            }
-          }
-          setEntries(sortByScore(merged));
-        } else {
-          setEntries(sortByScore(data));
-        }
+        setEntries(normalizeAndSort(data));
       } catch (err) {
         console.error("Failed to load leaderboard data:", err);
-        setEntries(filterRoomId === "global" ? getMockLeaderboard() : []);
+        setEntries([]);
       }
     };
 
