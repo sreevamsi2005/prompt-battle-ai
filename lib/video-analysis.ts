@@ -1,5 +1,6 @@
 import { spawn } from "child_process";
 import * as fs from "fs";
+import * as os from "os";
 import * as path from "path";
 import OpenAI from "openai";
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -15,7 +16,9 @@ export interface VideoAnalysisResult {
   error?: string;
 }
 
-// Convert a URL-style path like /videos/golden-field.mp4 → filesystem path
+// Convert a URL-style path like /videos/golden-field.mp4 → filesystem path.
+// NOTE: callers should pass an absolute HTTPS URL in production — the local public/
+// folder is NOT present in the serverless function filesystem on Netlify.
 function resolveVideoInput(input: string): string {
   if (input.startsWith("/videos/")) {
     return path.join(process.cwd(), "public", input);
@@ -29,9 +32,11 @@ export async function extractFrames(videoInput: string, count = 4): Promise<Buff
   const resolved = resolveVideoInput(videoInput);
 
   return new Promise((resolve, reject) => {
+    // Use the OS temp dir (/tmp). On Netlify/Lambda process.cwd() is read-only,
+    // so writing frames under it throws EROFS — /tmp is the only writable path.
     const tempDir = path.join(
-      process.cwd(),
-      ".tmp-frames",
+      os.tmpdir(),
+      "prompt-battle-frames",
       `f-${Date.now()}-${Math.random().toString(36).slice(2)}`
     );
     fs.mkdirSync(tempDir, { recursive: true });
@@ -51,11 +56,13 @@ export async function extractFrames(videoInput: string, count = 4): Promise<Buff
     let stderr = "";
     proc.stderr.on("data", (d: Buffer) => { stderr += d.toString(); });
 
+    // Both inputs may be fetched over HTTPS (reference + user CDN video), so allow
+    // more headroom than a purely local read would need.
     const timeout = setTimeout(() => {
       proc.kill();
       cleanup(tempDir);
-      reject(new Error("ffmpeg timed out after 10s"));
-    }, 10000);
+      reject(new Error("ffmpeg timed out after 20s"));
+    }, 20000);
 
     proc.on("close", (code) => {
       clearTimeout(timeout);

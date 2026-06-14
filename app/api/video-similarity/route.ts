@@ -4,8 +4,20 @@ import { extractFrames, scoreVideoSimilarity } from "@/lib/video-analysis";
 import { updateRoomSubmissionWithVideoScore } from "@/lib/rooms";
 
 // Allow up to 60 s on Netlify (default is 10 s, which isn't enough for
-// frame extraction + GPT-4o-mini vision + blob update).
+// frame extraction + vision scoring + blob update).
 export const maxDuration = 60;
+
+// Build the absolute origin of this deployment so ffmpeg can fetch the reference
+// video over HTTPS. The local public/ folder is NOT in the serverless function's
+// filesystem on Netlify, so a relative /videos path can't be read there.
+function resolveOrigin(req: NextRequest): string {
+  const host = req.headers.get("host");
+  if (host) {
+    const proto = req.headers.get("x-forwarded-proto") ?? (host.includes("localhost") ? "http" : "https");
+    return `${proto}://${host}`;
+  }
+  return process.env.URL ?? req.nextUrl.origin;
+}
 
 export async function POST(req: NextRequest) {
   const startTime = Date.now();
@@ -31,13 +43,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Challenge not found", compositeScore: textScore, videoScore: null }, { status: 200 });
     }
 
-    const referenceVideoPath = `/videos/${challenge.id}.mp4`;
+    // Absolute HTTPS URL so ffmpeg can fetch it in the serverless function.
+    const referenceVideoUrl = `${resolveOrigin(req)}/videos/${challenge.id}.mp4`;
 
     // Stage 1: extract frames
     let referenceFrames: Buffer[], userFrames: Buffer[];
     try {
       [referenceFrames, userFrames] = await Promise.all([
-        extractFrames(referenceVideoPath, 4),
+        extractFrames(referenceVideoUrl, 4),
         extractFrames(userVideoUrl, 4),
       ]);
     } catch (err) {
@@ -46,7 +59,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: message, stage: "frame_extraction", videoScore: null, compositeScore: textScore }, { status: 200 });
     }
 
-    // Stage 2: score with GPT-4o-mini vision
+    // Stage 2: score with the vision model
     let videoScore: number, vFeedback: string;
     try {
       ({ score: videoScore, feedback: vFeedback } = await scoreVideoSimilarity(referenceFrames, userFrames));
