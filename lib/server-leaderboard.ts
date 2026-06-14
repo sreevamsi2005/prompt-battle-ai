@@ -16,6 +16,10 @@ export async function saveLeaderboard(entries: LeaderboardEntry[]): Promise<void
   await blobSet("leaderboard", "entries", sortLeaderboard(entries).slice(0, 100));
 }
 
+export async function clearLeaderboard(): Promise<void> {
+  await blobSet("leaderboard", "entries", []);
+}
+
 export async function addEntry(
   playerName: string,
   similarityScore: number,

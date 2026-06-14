@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { loadLeaderboard, addEntry } from "@/lib/server-leaderboard";
+import { loadLeaderboard, addEntry, clearLeaderboard } from "@/lib/server-leaderboard";
 import { addRoomSubmission, loadRoomSubmissions } from "@/lib/rooms";
 import { appendDataSheetRow } from "@/lib/csv-export";
+import { isAdminPasswordValid } from "@/lib/admin-auth";
 
 export async function GET(req: NextRequest) {
   const roomId = req.nextUrl.searchParams.get("roomId");
@@ -103,5 +104,21 @@ export async function POST(req: NextRequest) {
       { error: `Failed to save score: ${message}` },
       { status: 500 }
     );
+  }
+}
+
+// DELETE clears the global leaderboard. Admin-only (x-admin-password header).
+export async function DELETE(req: NextRequest) {
+  const password = req.headers.get("x-admin-password");
+  if (!password || !isAdminPasswordValid(password)) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  try {
+    await clearLeaderboard();
+    return NextResponse.json({ ok: true, entries: [] });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("Leaderboard DELETE error:", message);
+    return NextResponse.json({ error: `Failed to clear leaderboard: ${message}` }, { status: 500 });
   }
 }

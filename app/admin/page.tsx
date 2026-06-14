@@ -169,6 +169,20 @@ export default function AdminPage() {
     finally { setLoading(false); }
   };
 
+  const handleResetLeaderboard = async () => {
+    if (!confirm("Clear the entire GLOBAL leaderboard? This cannot be undone.")) return;
+    setLoading(true);
+    try {
+      const res = await fetch("/api/leaderboard", {
+        method: "DELETE",
+        headers: { "x-admin-password": password },
+      });
+      if (res.ok) alert("Global leaderboard cleared.");
+      else alert("Failed to clear leaderboard");
+    } catch (e) { console.error(e); alert("Failed to clear leaderboard"); }
+    finally { setLoading(false); }
+  };
+
   // ── LOGIN ───────────────────────────────────────────────────────────────────
   if (!authenticated) {
     return (
@@ -471,12 +485,21 @@ export default function AdminPage() {
               {/* Actions */}
               <div>
                 <label className="block text-xs font-bold uppercase text-zinc-500 font-mono mb-2">Actions</label>
-                <button
-                  onClick={() => handleRoomAction(room.id, "reset-scores")}
-                  className="w-full text-xs font-bold font-mono text-zinc-300 bg-zinc-900 border border-zinc-800 hover:border-rose-500/50 hover:text-rose-300 rounded px-4 py-1.5 transition"
-                >
-                  Reset Scores
-                </button>
+                <div className="space-y-2">
+                  <button
+                    onClick={() => handleRoomAction(room.id, "reset-scores")}
+                    className="w-full text-xs font-bold font-mono text-zinc-300 bg-zinc-900 border border-zinc-800 hover:border-rose-500/50 hover:text-rose-300 rounded px-4 py-1.5 transition"
+                  >
+                    Reset Scores
+                  </button>
+                  <button
+                    onClick={handleResetLeaderboard}
+                    disabled={loading}
+                    className="w-full text-xs font-bold font-mono text-zinc-300 bg-zinc-900 border border-zinc-800 hover:border-rose-500/50 hover:text-rose-300 rounded px-4 py-1.5 transition disabled:opacity-40"
+                  >
+                    Reset Global Leaderboard
+                  </button>
+                </div>
               </div>
             </div>
 
