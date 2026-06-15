@@ -34,6 +34,8 @@ export async function POST(req: NextRequest) {
       challengeId,
       videoTag,
       difficulty,
+      compositeScore,
+      videoScore,
     } = body as {
       playerName?: string;
       similarityScore?: number;
@@ -47,6 +49,8 @@ export async function POST(req: NextRequest) {
       challengeId?: string;
       videoTag?: string;
       difficulty?: "easy" | "medium" | "hard";
+      compositeScore?: number;
+      videoScore?: number;
     };
 
     if (!playerName?.trim() || similarityScore == null || normalizedScore == null) {
@@ -95,7 +99,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(subs);
     }
 
-    const entries = await addEntry(playerName, similarityScore, normalizedScore, safeTime, email);
+    const entries = await addEntry(playerName, similarityScore, normalizedScore, safeTime, email, compositeScore, videoScore);
     return NextResponse.json(entries);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

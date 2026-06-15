@@ -25,7 +25,9 @@ export async function addEntry(
   similarityScore: number,
   normalizedScore: number,
   timeTakenToPrompt: number,
-  email?: string
+  email?: string,
+  compositeScore?: number,
+  videoScore?: number
 ): Promise<LeaderboardEntry[]> {
   return blobUpdate<LeaderboardEntry[]>("leaderboard", "entries", [], (cur) =>
     sortLeaderboard([
@@ -37,6 +39,8 @@ export async function addEntry(
         timeTakenToPrompt,
         timestamp: Date.now(),
         ...(email ? { email } : {}),
+        ...(compositeScore != null ? { compositeScore } : {}),
+        ...(videoScore != null ? { videoScore } : {}),
       },
     ]).slice(0, 100)
   );

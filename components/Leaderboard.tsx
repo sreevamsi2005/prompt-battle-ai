@@ -71,8 +71,8 @@ export default function Leaderboard({ entries, highlightPlayer }: LeaderboardPro
                       {entry.normalizedScore}
                     </span>
                     <span className="text-xs text-zinc-500 font-mono font-semibold">norm</span>
-                    <span className="text-base font-bold text-zinc-400 font-mono ml-2">{entry.similarityScore}</span>
-                    <span className="text-xs text-zinc-600 font-mono font-semibold">sim</span>
+                    <span className="text-base font-bold text-zinc-400 font-mono ml-2">{entry.compositeScore ?? entry.similarityScore}</span>
+                    <span className="text-xs text-zinc-600 font-mono font-semibold">score</span>
                   </div>
                   <p className="text-[10px] text-zinc-500 font-mono mt-2 border-t border-zinc-900 pt-2">
                     {formatTime(entry.timestamp)}
@@ -120,8 +120,8 @@ export default function Leaderboard({ entries, highlightPlayer }: LeaderboardPro
                     <span className="text-xs text-zinc-500 font-mono font-semibold">norm</span>
                   </div>
                   <div className="flex items-baseline gap-1">
-                    <span className="text-sm font-bold text-zinc-400 font-mono">{entry.similarityScore}</span>
-                    <span className="text-xs text-zinc-600 font-mono font-semibold">sim</span>
+                    <span className="text-sm font-bold text-zinc-400 font-mono">{entry.compositeScore ?? entry.similarityScore}</span>
+                    <span className="text-xs text-zinc-600 font-mono font-semibold">score</span>
                   </div>
                 </div>
               </motion.div>

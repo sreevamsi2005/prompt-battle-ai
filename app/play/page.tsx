@@ -7,7 +7,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { getPlayerName, setPlayerName } from "@/lib/leaderboard";
 import { formatApiError } from "@/lib/error-stage";
 import { computeNormalizedScore } from "@/lib/scoring";
-import type { ScoreResult, LeaderboardEntry } from "@/lib/types";
+import type { ScoreResult } from "@/lib/types";
 
 /* ─── Types ─────────────────────────────────────────────────────────────── */
 type Phase = "lobby" | "loading" | "playing" | "generating" | "results";
@@ -321,7 +321,6 @@ export default function PlayPage() {
   const [videoScore, setVideoScore] = useState<number | null>(null);
 
   // Highscore Lists
-  const [globalLeaderboard, setGlobalLeaderboard] = useState<LeaderboardEntry[]>([]);
   
   const [loadingRooms, setLoadingRooms] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -343,6 +342,8 @@ export default function PlayPage() {
   const recorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const voiceFinalRef = useRef<string>("");
+  // Ensures we post to the global leaderboard only once per submission.
+  const publishedGlobalRef = useRef(false);
   // Holds score + context needed by the polling effect (avoids stale-closure deps)
   const pollCtxRef = useRef<{ score: ScoreResult; normalizedScore: number; playerName: string; roomId: string | null; prompt: string; submissionTimestamp: number; challengeId: string; timeTakenToPrompt: number; email: string; videoTag: string; difficulty: "easy" | "medium" | "hard" } | null>(null);
 
@@ -480,6 +481,33 @@ export default function PlayPage() {
     }
   };
 
+  // Publish the player's score to the GLOBAL leaderboard exactly once, using the
+  // composite (text + video) score so the board reflects combined similarity.
+  // Called from the no-video path and once video similarity resolves.
+  const publishGlobalScore = async (compositeScore: number, vScore: number | null) => {
+    if (publishedGlobalRef.current) return;
+    publishedGlobalRef.current = true;
+    const ctx = pollCtxRef.current;
+    const difficulty = ctx?.difficulty ?? challenge?.difficulty ?? "medium";
+    const textScore = ctx?.score.score ?? result?.score ?? compositeScore;
+    try {
+      await fetch("/api/leaderboard", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          scope: "global",
+          playerName: ctx?.playerName ?? (playerName.trim() || "Anonymous Player"),
+          similarityScore: textScore,
+          compositeScore,
+          videoScore: vScore ?? undefined,
+          normalizedScore: computeNormalizedScore(compositeScore, difficulty),
+          timeTakenToPrompt: ctx?.timeTakenToPrompt ?? 60,
+          email: ctx?.email ?? playerEmail.trim(),
+        }),
+      });
+    } catch {}
+  };
+
   // Poll for video result while in "generating" phase
   useEffect(() => {
     if (phase !== "generating" || !requestId) return;
@@ -540,12 +568,23 @@ export default function PlayPage() {
               }),
             })
             .then(r => r.json())
-            .then(vsResult => { if (vsResult.videoScore != null) setVideoScore(vsResult.videoScore); })
-            .catch(() => {});
+            .then(vsResult => {
+              if (vsResult.videoScore != null) {
+                setVideoScore(vsResult.videoScore);
+                const composite = vsResult.compositeScore ?? Math.round(ctx.score.score * 0.5 + vsResult.videoScore * 0.5);
+                publishGlobalScore(composite, vsResult.videoScore);
+              } else {
+                publishGlobalScore(ctx.score.score, null);
+              }
+            })
+            .catch(() => { publishGlobalScore(ctx.score.score, null); });
+          } else {
+            publishGlobalScore(ctx?.score.score ?? 0, null);
           }
         } else if (data.status === "FAILED" || data.error) {
           setError(formatApiError(data, "Video generation failed."));
           await finish(null);
+          publishGlobalScore(pollCtxRef.current?.score.score ?? 0, null);
         }
         // IN_QUEUE / IN_PROGRESS → keep polling
       } catch {}
@@ -565,6 +604,7 @@ export default function PlayPage() {
     setPlayerNameState(name);
     setSubmitting(true);
     setError(null);
+    publishedGlobalRef.current = false;
 
     try {
       const [genRes, scoreRes] = await Promise.all([
@@ -632,6 +672,8 @@ export default function PlayPage() {
         setResult(scoreData);
         setNormalizedScoreEarned(normalizedScore);
         setPhase("results");
+        // No video for this submission → publish text-only composite to global.
+        publishGlobalScore(scoreData.score, null);
       } else {
         setRequestId(genData.requestId);
         setPhase("generating");
@@ -696,40 +738,6 @@ export default function PlayPage() {
     recognitionRef.current?.stop();
     if (recorderRef.current?.state === "recording") recorderRef.current.stop();
   };
-
-  // When results arrive: auto-post score to global leaderboard, then keep polling it
-  useEffect(() => {
-    if (phase !== "results" || !result) return;
-    const ctx = pollCtxRef.current;
-
-    const refreshLeaderboard = () =>
-      fetch("/api/leaderboard")
-        .then(r => r.json())
-        .then(data => setGlobalLeaderboard(data))
-        .catch(() => {});
-
-    // Post score once on entry, then load the updated list
-    fetch("/api/leaderboard", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        scope: "global",
-        playerName: playerName.trim() || "Anonymous Player",
-        similarityScore: result.score,
-        normalizedScore: normalizedScoreEarned ?? 0,
-        timeTakenToPrompt: ctx?.timeTakenToPrompt ?? 60,
-        email: playerEmail.trim(),
-      }),
-    })
-      .then(r => r.json())
-      .then(data => setGlobalLeaderboard(data))
-      .catch(refreshLeaderboard);
-
-    // Keep refreshing every 4 s so other players' scores appear live
-    const t = setInterval(refreshLeaderboard, 4000);
-    return () => clearInterval(t);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase]);
 
   // Ask the admin (booth operator) to start the next challenge for this room.
   const requestNextChallenge = async () => {
@@ -911,6 +919,36 @@ export default function PlayPage() {
                   <p className="mt-2 text-sm leading-relaxed text-zinc-400">
                     Join the live battle session — you'll be placed in the first open slot.
                   </p>
+
+                  {/* Multiplayer participant details (separate from solo) */}
+                  <div className="mt-5 space-y-3">
+                    <div>
+                      <label className="block text-xs uppercase font-bold text-zinc-500 font-mono mb-2">
+                        Participant Username
+                      </label>
+                      <input
+                        type="text"
+                        value={playerName}
+                        onChange={(e) => setPlayerNameState(e.target.value)}
+                        placeholder="e.g. CyberRider"
+                        maxLength={18}
+                        className="input-field"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs uppercase font-bold text-zinc-500 font-mono mb-2">
+                        Email Address
+                      </label>
+                      <input
+                        type="email"
+                        value={playerEmail}
+                        onChange={(e) => { setPlayerEmail(e.target.value); setEmailError(null); }}
+                        placeholder="you@example.com"
+                        className="input-field"
+                      />
+                      {emailError && <p className="mt-1.5 text-xs text-rose-400 font-mono">{emailError}</p>}
+                    </div>
+                  </div>
 
                   {(() => {
                     const room = rooms[0];
@@ -1259,9 +1297,9 @@ export default function PlayPage() {
                 {/* Side-by-Side Dual Video */}
                 {userVideo && <DualVideo originalSrc={challenge.videoUrl} userSrc={userVideo.videoUrl} />}
 
-                {/* Side-by-Side LEADERBOARDS (Local vs Global) */}
-                <div className="grid gap-4 md:grid-cols-2 mt-2">
-                  
+                {/* Room standings only — global board lives on /leaderboard */}
+                <div className="mt-2">
+
                   {/* LOCAL LEADERBOARD */}
                   <div className="graphite-card p-4">
                     <h3 className="text-xs sm:text-sm font-bold text-white uppercase tracking-wider font-mono flex items-center justify-between border-b border-zinc-900 pb-2.5">
@@ -1297,42 +1335,6 @@ export default function PlayPage() {
                       ) : (
                         <div className="text-center py-8 text-xs sm:text-sm text-zinc-500 font-mono">
                           No scores recorded for this room session yet.
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* GLOBAL LEADERBOARD */}
-                  <div className="graphite-card p-4">
-                    <h3 className="text-xs sm:text-sm font-bold text-white uppercase tracking-wider font-mono border-b border-zinc-900 pb-2.5">
-                      Global summit Highscores
-                    </h3>
-                    
-                    <div className="mt-3 space-y-2 overflow-y-auto max-h-[200px] pr-1">
-                      {globalLeaderboard.slice(0, 10).map((entry, idx) => {
-                        const isMe = entry.playerName.toLowerCase() === playerName.toLowerCase();
-                        return (
-                          <div
-                            key={entry.playerName + entry.timestamp + idx}
-                            className={`flex items-center justify-between p-2.5 rounded text-xs sm:text-sm border ${
-                              isMe
-                                ? "bg-white/5 border-[#0066FF]/35 text-white font-bold"
-                                : "bg-black/40 border-zinc-900 text-zinc-300"
-                            }`}
-                          >
-                            <div className="flex items-center gap-2.5">
-                              <span className="w-5 text-center font-mono font-bold text-zinc-600">{idx + 1}</span>
-                              <span className="truncate max-w-[150px]">{entry.playerName}</span>
-                            </div>
-                            <div className="flex items-center gap-2 font-mono">
-                              <span className="text-[#0066FF] font-bold">{entry.similarityScore}%</span>
-                            </div>
-                          </div>
-                        );
-                      })}
-                      {globalLeaderboard.length === 0 && (
-                        <div className="text-center py-8 text-xs sm:text-sm text-zinc-500 font-mono">
-                          No global highscores loaded.
                         </div>
                       )}
                     </div>
