@@ -307,6 +307,10 @@ export default function PlayPage() {
   const [playerName, setPlayerNameState] = useState("");
   const [playerEmail, setPlayerEmail] = useState("");
   const [emailError, setEmailError] = useState<string | null>(null);
+  // Independent identity for the multiplayer card (kept separate from solo).
+  const [mpName, setMpName] = useState("");
+  const [mpEmail, setMpEmail] = useState("");
+  const [mpEmailError, setMpEmailError] = useState<string | null>(null);
   const [rooms, setRooms] = useState<RoomListItem[]>([]);
   const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null);
   
@@ -762,19 +766,23 @@ export default function PlayPage() {
 
   const isValidEmail = (v: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim());
 
-  // Join Room button click
+  // Join Room button click — uses the multiplayer card's own details, then
+  // promotes them to the active identity used by the rest of the game flow.
   const handleJoinRoom = (room: RoomListItem) => {
-    if (!playerName.trim()) {
+    if (!mpName.trim()) {
       setError("Please enter your name first.");
       return;
     }
-    if (!isValidEmail(playerEmail)) {
-      setEmailError("Enter a valid email address.");
+    if (!isValidEmail(mpEmail)) {
+      setMpEmailError("Enter a valid email address.");
       return;
     }
-    setEmailError(null);
+    setMpEmailError(null);
     setError(null);
-    setPlayerName(playerName.trim());
+    const name = mpName.trim();
+    setPlayerName(name);
+    setPlayerNameState(name);
+    setPlayerEmail(mpEmail.trim());
     setSelectedRoomId(room.id);
     setPhase("loading");
   };
@@ -928,8 +936,8 @@ export default function PlayPage() {
                       </label>
                       <input
                         type="text"
-                        value={playerName}
-                        onChange={(e) => setPlayerNameState(e.target.value)}
+                        value={mpName}
+                        onChange={(e) => setMpName(e.target.value)}
                         placeholder="e.g. CyberRider"
                         maxLength={18}
                         className="input-field"
@@ -941,12 +949,12 @@ export default function PlayPage() {
                       </label>
                       <input
                         type="email"
-                        value={playerEmail}
-                        onChange={(e) => { setPlayerEmail(e.target.value); setEmailError(null); }}
+                        value={mpEmail}
+                        onChange={(e) => { setMpEmail(e.target.value); setMpEmailError(null); }}
                         placeholder="you@example.com"
                         className="input-field"
                       />
-                      {emailError && <p className="mt-1.5 text-xs text-rose-400 font-mono">{emailError}</p>}
+                      {mpEmailError && <p className="mt-1.5 text-xs text-rose-400 font-mono">{mpEmailError}</p>}
                     </div>
                   </div>
 
