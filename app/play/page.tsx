@@ -323,9 +323,11 @@ export default function PlayPage() {
   const [userVideo, setUserVideo] = useState<UserVideo | null>(null);
   const [result, setResult] = useState<ScoreResult | null>(null);
   const [videoScore, setVideoScore] = useState<number | null>(null);
+  // True when a solo submission scored ≤70 so no video was generated.
+  const [videoGated, setVideoGated] = useState(false);
 
   // Highscore Lists
-  
+
   const [loadingRooms, setLoadingRooms] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -456,7 +458,8 @@ export default function PlayPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase, challenge?.challengeId]);
 
-  // Load random challenge (Solo Mode)
+  // Practice Mode — load the SAME challenge currently set for the room players,
+  // so solo practice mirrors the live booth challenge.
   const loadSoloChallenge = async () => {
     if (!isValidEmail(playerEmail)) {
       setEmailError("Enter a valid email address.");
@@ -474,6 +477,15 @@ export default function PlayPage() {
     setSelectedRoomId(null);
 
     try {
+      // Prefer the room's active challenge; fall back to a random one if none set.
+      const roomsRes = await fetch("/api/rooms");
+      const roomsData = await roomsRes.json();
+      const activeChallenge = Array.isArray(roomsData) ? roomsData[0]?.challengeDetails : null;
+      if (activeChallenge) {
+        setChallenge(activeChallenge);
+        setPhase("playing");
+        return;
+      }
       const res = await fetch("/api/challenge");
       const data = await res.json();
       if (!res.ok || data.error) throw new Error(data.error ?? "Failed to fetch challenge");
@@ -600,7 +612,8 @@ export default function PlayPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [requestId, phase]);
 
-  // Submit Prompt — fire-and-forget to queue, score in parallel
+  // Submit Prompt — score first, then generate a video. In solo practice the
+  // video is only generated when the prompt similarity is strong (>70).
   const handleSubmitPrompt = async () => {
     if (!challenge || !prompt.trim()) return;
     const name = playerName.trim() || "Anonymous Player";
@@ -608,23 +621,16 @@ export default function PlayPage() {
     setPlayerNameState(name);
     setSubmitting(true);
     setError(null);
+    setVideoGated(false);
     publishedGlobalRef.current = false;
 
     try {
-      const [genRes, scoreRes] = await Promise.all([
-        fetch("/api/generate-prompt", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ userPrompt: prompt.trim() }),
-        }),
-        fetch("/api/score", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ challengeId: challenge.challengeId, userPrompt: prompt.trim() }),
-        }),
-      ]);
-
-      const genData = await genRes.json();
+      // Score the prompt first — needed to decide whether to spend a video generation.
+      const scoreRes = await fetch("/api/score", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ challengeId: challenge.challengeId, userPrompt: prompt.trim() }),
+      });
       const scoreData = (await scoreRes.json()) as ScoreResult;
       if (!scoreRes.ok) throw new Error(formatApiError(scoreData as any, "Scoring failed."));
 
@@ -648,11 +654,8 @@ export default function PlayPage() {
         difficulty: challenge?.difficulty ?? "medium",
       };
 
-      if (!genData.requestId) {
-        // No FAL_KEY or submit failed — show results with score only
-        if (genData.error && !genData.skipped) {
-          setError(formatApiError(genData, "Video generation unavailable."));
-        }
+      // Record the text-only result (room submission + global) and show results.
+      const finishTextOnly = async () => {
         if (selectedRoomId) {
           try {
             await fetch("/api/leaderboard", {
@@ -676,8 +679,30 @@ export default function PlayPage() {
         setResult(scoreData);
         setNormalizedScoreEarned(normalizedScore);
         setPhase("results");
-        // No video for this submission → publish text-only composite to global.
         publishGlobalScore(scoreData.score, null);
+      };
+
+      // Solo practice: only generate a video for strong prompts (>70).
+      if (!selectedRoomId && scoreData.score <= 70) {
+        setVideoGated(true);
+        await finishTextOnly();
+        return;
+      }
+
+      // Queue the video generation.
+      const genRes = await fetch("/api/generate-prompt", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userPrompt: prompt.trim() }),
+      });
+      const genData = await genRes.json();
+
+      if (!genData.requestId) {
+        // No FAL_KEY or submit failed — show results with score only
+        if (genData.error && !genData.skipped) {
+          setError(formatApiError(genData, "Video generation unavailable."));
+        }
+        await finishTextOnly();
       } else {
         setRequestId(genData.requestId);
         setPhase("generating");
@@ -895,7 +920,7 @@ export default function PlayPage() {
                   <div className="mt-8 pt-6 border-t border-zinc-850">
                     <h3 className="text-sm font-bold text-white">Option A: Practice Mode</h3>
                     <p className="mt-1 text-xs text-zinc-500">
-                      Learn the visual semantics by playing random challenge clips.
+                      Practice on the same challenge the room is currently playing. A video is generated only when your prompt scores above 70.
                     </p>
                     <button
                       onClick={loadSoloChallenge}
@@ -1184,14 +1209,6 @@ export default function PlayPage() {
                     >
                       Submit & Render Video →
                     </button>
-                    {!selectedRoomId && (
-                      <button
-                        onClick={loadSoloChallenge}
-                        className="btn-secondary w-full py-2.5 text-xs font-semibold"
-                      >
-                        Skip Challenge
-                      </button>
-                    )}
                   </div>
                 </div>
               </motion.div>
@@ -1241,6 +1258,12 @@ export default function PlayPage() {
                 {error && !userVideo && (
                   <div className="rounded border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs text-amber-400 font-semibold text-center">
                     {error} — your score is still recorded.
+                  </div>
+                )}
+                {/* Practice-mode gate notice */}
+                {videoGated && !userVideo && (
+                  <div className="rounded border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs text-amber-400 font-semibold text-center">
+                    Reach 70+ prompt similarity to unlock video generation. Try a sharper prompt!
                   </div>
                 )}
                 {/* Score breakdown */}
