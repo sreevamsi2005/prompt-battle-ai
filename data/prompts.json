@@ -34,5 +34,41 @@
     "prompt": "A lone white wolf standing on a snow-covered mountain ridge howling at the Northern Lights, ultra-wide angle, breathtaking aurora borealis in vivid green and purple",
     "difficulty": "medium",
     "theme": "Wild North"
+  },
+  {
+    "id": "koi-pond",
+    "prompt": "A vibrant orange and white koi fish gliding slowly through a tranquil pond dotted with pink lotus flowers, clear rippling water, soft natural daylight, serene close-up",
+    "difficulty": "easy",
+    "theme": "Zen & Calm"
+  },
+  {
+    "id": "hot-air-balloons",
+    "prompt": "Dozens of colorful hot air balloons drifting over rolling green hills at sunrise, soft morning mist, warm pastel sky, gentle sweeping aerial wide shot",
+    "difficulty": "easy",
+    "theme": "Sky & Color"
+  },
+  {
+    "id": "rainforest-waterfall",
+    "prompt": "A powerful waterfall cascading into a misty turquoise pool deep in a lush tropical rainforest, sun rays piercing through the dense canopy, vibrant green foliage, cinematic",
+    "difficulty": "medium",
+    "theme": "Lush Wild"
+  },
+  {
+    "id": "vintage-train",
+    "prompt": "A vintage steam locomotive winding through snowy mountain valleys, billowing white steam, warm golden afternoon light glinting off the metal, nostalgic cinematic wide shot",
+    "difficulty": "medium",
+    "theme": "Retro Journey"
+  },
+  {
+    "id": "underwater-city",
+    "prompt": "A lone diver exploring the ruins of a bioluminescent sunken city deep underwater, glowing blue coral overtaking ancient stone towers, shafts of light from the surface, eerie atmospheric",
+    "difficulty": "hard",
+    "theme": "Sunken Future"
+  },
+  {
+    "id": "desert-sandstorm",
+    "prompt": "A massive towering sandstorm wall engulfing an abandoned desert town at dusk, swirling ochre dust, dramatic backlight, intense apocalyptic cinematic scale",
+    "difficulty": "hard",
+    "theme": "Storm & Sand"
   }
 ]
