@@ -276,28 +276,48 @@ function ChallengeTimer({ seconds }: { seconds: number | null }) {
   const expired = seconds === 0;
 
   return (
-    <div className={`relative flex items-center gap-2 rounded border px-3 py-1.5 font-mono text-sm font-bold transition-all select-none ${
-      expired   ? "border-rose-800/50 bg-rose-950/40 text-rose-700" :
-      danger    ? "border-rose-500/70 bg-rose-500/15 text-rose-300 animate-pulse" :
-                  "border-zinc-700 bg-zinc-900/80 text-zinc-200"
-    }`}>
-      {danger && !expired && (
+    <motion.div
+      animate={danger ? { x: [0, -2, 2, -2, 2, 0] } : { x: 0 }}
+      transition={danger ? { duration: 0.45, repeat: Infinity, repeatDelay: 0.25 } : { duration: 0.2 }}
+      className={`relative flex items-center gap-2 rounded border px-3 py-1.5 font-mono text-sm font-bold transition-colors select-none ${
+        expired   ? "border-rose-500/70 bg-rose-500/20 text-rose-300" :
+        danger    ? "border-rose-500/70 bg-rose-500/15 text-rose-300" :
+                    "border-zinc-700 bg-zinc-900/80 text-zinc-200"
+      }`}
+    >
+      {danger && (
         <span className="absolute -top-1 -right-1 flex h-2.5 w-2.5">
           <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-rose-500 opacity-75" />
           <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-rose-500" />
         </span>
       )}
-      {danger && !expired && <span className="text-xs">⚠</span>}
-      <svg className={`h-3.5 w-3.5 ${danger ? "text-rose-400" : "text-zinc-500"}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+      {danger && <span className="text-xs">⚠</span>}
+      <svg className={`h-3.5 w-3.5 ${danger || expired ? "text-rose-400" : "text-zinc-500"}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
         <circle cx="12" cy="12" r="10" />
         <polyline points="12 6 12 12 16 14" />
       </svg>
       {expired ? (
-        <span className="text-rose-600 font-extrabold tracking-widest text-xs">TIME UP</span>
+        <motion.span
+          animate={{ scale: [1, 1.12, 1], opacity: [1, 0.6, 1] }}
+          transition={{ duration: 0.7, repeat: Infinity }}
+          className="text-rose-300 font-extrabold tracking-widest text-xs"
+        >
+          TIME&apos;S UP
+        </motion.span>
+      ) : danger ? (
+        <motion.span
+          key={seconds}
+          initial={{ scale: 1.6, opacity: 0.3 }}
+          animate={{ scale: 1, opacity: 1 }}
+          transition={{ duration: 0.3 }}
+          className="text-rose-200 font-extrabold text-base"
+        >
+          {seconds}<span className="text-xs ml-px opacity-60">s</span>
+        </motion.span>
       ) : (
-        <span className={danger ? "text-rose-200 font-extrabold text-base" : ""}>{seconds}<span className="text-xs ml-px opacity-60">s</span></span>
+        <span>{seconds}<span className="text-xs ml-px opacity-60">s</span></span>
       )}
-    </div>
+    </motion.div>
   );
 }
 
@@ -344,6 +364,8 @@ export default function PlayPage() {
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const activeChallengeIdRef = useRef<string | null>(null);
   const challengeStartTimeRef = useRef<number | null>(null);
+  // Guards the timer's auto-submit so it fires at most once per challenge.
+  const autoSubmittedRef = useRef(false);
   const recognitionRef = useRef<any>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -440,10 +462,11 @@ export default function PlayPage() {
     return () => clearInterval(t);
   }, [selectedRoomId, playerName, phase]);
 
-  // 60-second challenge timer — resets whenever a new challenge is loaded
+  // 90-second challenge timer — resets whenever a new challenge is loaded
   useEffect(() => {
     if (phase === "playing" && challenge) {
-      setTimeLeft(60);
+      setTimeLeft(90);
+      autoSubmittedRef.current = false;
       challengeStartTimeRef.current = Date.now();
       const t = setInterval(() => {
         setTimeLeft(prev => {
@@ -457,6 +480,15 @@ export default function PlayPage() {
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase, challenge?.challengeId]);
+
+  // Auto-submit whatever prompt is written when the timer hits 0.
+  useEffect(() => {
+    if (phase === "playing" && timeLeft === 0 && challenge && !submitting && !autoSubmittedRef.current) {
+      autoSubmittedRef.current = true;
+      if (prompt.trim()) handleSubmitPrompt();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [timeLeft, phase]);
 
   // Practice Mode — load the SAME challenge currently set for the room players,
   // so solo practice mirrors the live booth challenge.
@@ -637,8 +669,8 @@ export default function PlayPage() {
       const normalizedScore = challenge ? computeNormalizedScore(scoreData.score, challenge.difficulty) : 0;
       const submissionTimestamp = Date.now();
       const timeTakenToPrompt = challengeStartTimeRef.current
-        ? Math.min(60, Math.round((submissionTimestamp - challengeStartTimeRef.current) / 1000))
-        : 60;
+        ? Math.min(90, Math.round((submissionTimestamp - challengeStartTimeRef.current) / 1000))
+        : 90;
       const videoTag = challenge?.theme ?? "";
       pollCtxRef.current = {
         score: scoreData,
@@ -814,6 +846,42 @@ export default function PlayPage() {
 
   return (
     <div className="relative min-h-[calc(100vh-3.5rem)] flex flex-col justify-between overflow-hidden">
+
+      {/* Last-10s urgency: pulsing red vignette over the whole screen */}
+      {phase === "playing" && timeLeft !== null && timeLeft <= 10 && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: timeLeft === 0 ? [0.3, 0.7, 0.3] : [0.15, 0.45, 0.15] }}
+          transition={{ duration: timeLeft === 0 ? 0.5 : 1, repeat: Infinity, ease: "easeInOut" }}
+          className="pointer-events-none fixed inset-0 z-40"
+          style={{ boxShadow: "inset 0 0 150px 35px rgba(244,63,94,0.6)" }}
+        />
+      )}
+
+      {/* TIME'S UP flash while the prompt auto-submits */}
+      <AnimatePresence>
+        {phase === "playing" && timeLeft === 0 && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center"
+          >
+            <motion.div
+              initial={{ scale: 0.6, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              transition={{ type: "spring", stiffness: 300, damping: 16 }}
+              className="rounded-2xl border border-rose-500/50 bg-black/85 px-8 py-5 text-center backdrop-blur"
+            >
+              <p className="text-2xl sm:text-3xl font-extrabold tracking-widest text-rose-400 font-mono">TIME&apos;S UP!</p>
+              <p className="mt-1.5 text-xs text-zinc-400 font-mono">
+                {prompt.trim() ? "Submitting your prompt…" : "Time ran out — no prompt entered."}
+              </p>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <div className="relative mx-auto w-full max-w-6xl px-4 py-6 flex-1 flex flex-col min-h-0">
 
         {/* ── HEADER BAR ──────────────────────────────────────────────── */}
@@ -1145,8 +1213,8 @@ export default function PlayPage() {
                       onChange={(e) => setPrompt(e.target.value)}
                       placeholder={voiceStatus === "recording" ? "Listening... speak now" : "Enter prompt description..."}
                       maxLength={1000}
-                      disabled={!challenge}
-                      className={`flex-1 resize-none bg-transparent p-4 text-xs sm:text-sm leading-relaxed text-white outline-none ${voiceStatus === "recording" ? "placeholder:text-[#0066FF]/60 placeholder:animate-pulse" : "placeholder:text-zinc-700"}`}
+                      disabled={!challenge || timeLeft === 0}
+                      className={`flex-1 resize-none bg-transparent p-4 text-xs sm:text-sm leading-relaxed text-white outline-none disabled:opacity-60 ${voiceStatus === "recording" ? "placeholder:text-[#0066FF]/60 placeholder:animate-pulse" : "placeholder:text-zinc-700"}`}
                     />
                     <div className="flex items-center justify-between border-t border-zinc-900 px-4 py-2.5 bg-black/60">
                       <span className="text-xs text-zinc-500 font-mono">{prompt.length}/1000 chars</span>
