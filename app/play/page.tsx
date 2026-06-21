@@ -10,7 +10,7 @@ import { computeNormalizedScore } from "@/lib/scoring";
 import type { ScoreResult } from "@/lib/types";
 
 /* ─── Types ─────────────────────────────────────────────────────────────── */
-type Phase = "lobby" | "loading" | "playing" | "generating" | "results";
+type Phase = "lobby" | "loading" | "waiting" | "playing" | "generating" | "results";
 
 interface Challenge {
   challengeId: string;
@@ -45,6 +45,7 @@ interface RoomState {
   name: string;
   maxUsers: number;
   activeChallengeId: string | null;
+  battleStartedAt: number | null;
   challengeDetails: Challenge | null;
   players: RoomPlayerStatus[];
   submissions: { playerName: string; score: number; normalizedScore: number; videoScore?: number; compositeScore?: number; timeTakenToPrompt: number; timestamp: number }[];
@@ -339,6 +340,8 @@ export default function PlayPage() {
   
   // Challenge & gameplay state
   const [challenge, setChallenge] = useState<Challenge | null>(null);
+  // Battle start timestamp (multiplayer) — null while waiting for players.
+  const [battleStartedAt, setBattleStartedAt] = useState<number | null>(null);
   const [prompt, setPrompt] = useState("");
   const [userVideo, setUserVideo] = useState<UserVideo | null>(null);
   const [result, setResult] = useState<ScoreResult | null>(null);
@@ -363,6 +366,8 @@ export default function PlayPage() {
 
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const activeChallengeIdRef = useRef<string | null>(null);
+  // Identifies the current round (challengeId + battleStartedAt) to detect new rounds.
+  const roundKeyRef = useRef<string>("");
   const challengeStartTimeRef = useRef<number | null>(null);
   // Guards the timer's auto-submit so it fires at most once per challenge.
   const autoSubmittedRef = useRef(false);
@@ -419,31 +424,32 @@ export default function PlayPage() {
         if (res.ok) {
           const data = (await res.json()) as RoomState;
           setRoomState(data);
+          setBattleStartedAt(data.battleStartedAt ?? null);
 
           // Extract this player's video score if analysis has completed
           const myName = playerName.trim().toLowerCase();
           const mine = data.submissions?.find(s => s.playerName.toLowerCase() === myName);
           if (mine?.videoScore != null) setVideoScore(mine.videoScore);
 
-          // If the challenge ID changed, sync with it!
-          if (data.activeChallengeId !== activeChallengeIdRef.current) {
+          // A "round" is one challenge + one battle start. When either changes,
+          // it's a fresh round: reset state and route to waiting / playing.
+          const started = data.battleStartedAt != null;
+          const roundKey = `${data.activeChallengeId ?? ""}:${data.battleStartedAt ?? ""}`;
+          if (roundKey !== roundKeyRef.current) {
+            roundKeyRef.current = roundKey;
             activeChallengeIdRef.current = data.activeChallengeId;
-            
-            if (data.challengeDetails) {
-              setChallenge(data.challengeDetails);
-              // Clear previous entries
-              setPrompt("");
-              setUserVideo(null);
-              setResult(null);
-              setNormalizedScoreEarned(null);
-              setVideoScore(null);
-              setReplayRequested(false);
-              if (phase !== "playing") {
-                setPhase("playing");
-              }
-            } else {
-              setChallenge(null);
-            }
+            setChallenge(data.challengeDetails ?? null);
+            // Clear previous round entries
+            setPrompt("");
+            setUserVideo(null);
+            setResult(null);
+            setNormalizedScoreEarned(null);
+            setVideoScore(null);
+            setReplayRequested(false);
+            setVideoGated(false);
+            publishedGlobalRef.current = false;
+            // Battle started + challenge ready → play; otherwise wait for players.
+            setPhase(started && data.challengeDetails ? "playing" : "waiting");
           }
         } else {
           // Room full or deleted
@@ -462,24 +468,26 @@ export default function PlayPage() {
     return () => clearInterval(t);
   }, [selectedRoomId, playerName, phase]);
 
-  // 90-second challenge timer — resets whenever a new challenge is loaded
+  // 90-second challenge timer. In multiplayer it counts from the shared
+  // battleStartedAt so every player's clock is synchronized; solo counts from now.
   useEffect(() => {
     if (phase === "playing" && challenge) {
-      setTimeLeft(90);
+      const start = selectedRoomId && battleStartedAt ? battleStartedAt : Date.now();
+      challengeStartTimeRef.current = start;
       autoSubmittedRef.current = false;
-      challengeStartTimeRef.current = Date.now();
-      const t = setInterval(() => {
-        setTimeLeft(prev => {
-          if (prev === null || prev <= 1) { clearInterval(t); return 0; }
-          return prev - 1;
-        });
-      }, 1000);
+      const tick = () => {
+        const remaining = Math.max(0, 90 - Math.floor((Date.now() - start) / 1000));
+        setTimeLeft(remaining);
+        return remaining;
+      };
+      tick();
+      const t = setInterval(() => { if (tick() <= 0) clearInterval(t); }, 1000);
       return () => clearInterval(t);
     } else {
       setTimeLeft(null);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase, challenge?.challengeId]);
+  }, [phase, challenge?.challengeId, battleStartedAt, selectedRoomId]);
 
   // Auto-submit whatever prompt is written when the timer hits 0.
   useEffect(() => {
@@ -1108,6 +1116,79 @@ export default function PlayPage() {
                 <p className="text-sm font-mono text-zinc-400">Calibrating session feeds…</p>
               </motion.div>
             )}
+
+            {/* WAITING FOR PLAYERS — battle starts when full or host starts it */}
+            {phase === "waiting" && (() => {
+              const joined = roomState?.players?.length ?? 0;
+              const max = roomState?.maxUsers ?? 0;
+              const hasChallenge = !!roomState?.activeChallengeId;
+              return (
+                <motion.div
+                  key="waiting"
+                  initial={{ opacity: 0, scale: 0.98 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.98 }}
+                  className="flex flex-col items-center justify-center flex-1 py-12 px-4 my-auto"
+                >
+                  <div className="graphite-card p-8 w-full max-w-md text-center">
+                    {/* Animated count ring */}
+                    <div className="relative mx-auto h-20 w-20 mb-5">
+                      <div className="absolute inset-0 rounded-full border border-dashed border-[#0066FF]/30 animate-spin" style={{ animationDuration: "6s" }} />
+                      <div className="absolute inset-1.5 rounded-full border border-t-[#0066FF] border-r-transparent border-b-transparent border-l-[#0066FF] animate-spin" style={{ animationDuration: "1.5s" }} />
+                      <div className="absolute inset-0 flex items-center justify-center font-mono font-extrabold text-[#0066FF]">
+                        <span className="text-2xl">{joined}</span><span className="text-zinc-600 text-base">/{max}</span>
+                      </div>
+                    </div>
+
+                    <h2 className="text-lg font-bold text-white">
+                      {hasChallenge ? "Waiting for Players" : "Waiting for the Host"}
+                    </h2>
+                    <p className="mt-2 text-xs sm:text-sm text-zinc-400 leading-relaxed">
+                      {hasChallenge
+                        ? "The battle begins automatically once everyone joins — or when the host starts it."
+                        : "The host is choosing the challenge. Hang tight!"}
+                    </p>
+
+                    {roomState?.challengeDetails && (
+                      <div className="mt-4 inline-flex items-center gap-2 rounded border border-zinc-800 bg-black/40 px-3 py-1.5">
+                        <span className={`rounded px-1.5 py-0.5 text-[9px] font-bold uppercase font-mono border ${DIFFICULTY_STYLE[roomState.challengeDetails.difficulty]}`}>
+                          {roomState.challengeDetails.difficulty}
+                        </span>
+                        <span className="text-xs text-zinc-300 font-mono">{roomState.challengeDetails.theme}</span>
+                      </div>
+                    )}
+
+                    {/* Player chips + empty spots */}
+                    <div className="mt-5 flex flex-wrap justify-center gap-2">
+                      {roomState?.players?.map((p) => {
+                        const isMe = p.playerName.toLowerCase() === playerName.toLowerCase();
+                        return (
+                          <span
+                            key={p.playerName}
+                            className={`inline-flex items-center gap-1.5 rounded px-2.5 py-1 text-xs font-mono border ${
+                              isMe ? "bg-[#0066FF]/10 border-[#0066FF]/30 text-[#0066FF] font-semibold" : "bg-zinc-900/60 border-zinc-800 text-zinc-300"
+                            }`}
+                          >
+                            <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                            {p.playerName}{isMe && " (you)"}
+                          </span>
+                        );
+                      })}
+                      {Array.from({ length: Math.max(0, max - joined) }).map((_, i) => (
+                        <span key={`empty-${i}`} className="inline-flex items-center gap-1.5 rounded px-2.5 py-1 text-xs font-mono border border-dashed border-zinc-800 text-zinc-600">
+                          <span className="h-1.5 w-1.5 rounded-full bg-zinc-700 animate-pulse" />
+                          waiting…
+                        </span>
+                      ))}
+                    </div>
+
+                    <p className="mt-6 text-[11px] text-zinc-600 font-mono">
+                      Keep this screen open — the battle starts for everyone at once.
+                    </p>
+                  </div>
+                </motion.div>
+              );
+            })()}
 
             {/* PLAYING PHASE (Left video, Right prompting) ─────────── */}
             {phase === "playing" && (

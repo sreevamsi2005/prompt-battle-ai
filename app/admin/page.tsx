@@ -17,6 +17,7 @@ interface RoomAdminState {
   name: string;
   maxUsers: number;
   activeChallengeId: string | null;
+  battleStartedAt: number | null;
   challengeDetails: ChallengeDetails | null;
   players: { playerName: string; lastSeen: number }[];
   submissionCount: number;
@@ -501,6 +502,38 @@ export default function AdminPage() {
                   </button>
                 </div>
               </div>
+            </div>
+
+            {/* Battle control — waiting / start / in progress */}
+            <div className="mt-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 rounded-lg border border-zinc-800 bg-black/40 px-4 py-3">
+              <div className="flex items-center gap-2.5">
+                {room.battleStartedAt ? (
+                  <>
+                    <span className="relative flex h-2.5 w-2.5">
+                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-500 opacity-75" />
+                      <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500" />
+                    </span>
+                    <span className="text-xs font-bold font-mono text-emerald-400 uppercase tracking-wider">Battle in progress</span>
+                  </>
+                ) : room.activeChallengeId ? (
+                  <>
+                    <span className="h-2.5 w-2.5 rounded-full bg-amber-400 animate-pulse" />
+                    <span className="text-xs font-bold font-mono text-amber-300 uppercase tracking-wider">
+                      Waiting for players — {room.players?.length || 0}/{room.maxUsers} joined
+                    </span>
+                  </>
+                ) : (
+                  <span className="text-xs font-mono text-zinc-500">Set a challenge below to start a battle.</span>
+                )}
+              </div>
+              {room.activeChallengeId && !room.battleStartedAt && (
+                <button
+                  onClick={() => handleRoomAction(room.id, "start-battle")}
+                  className="btn-primary text-xs px-4 py-2 font-bold uppercase tracking-wider whitespace-nowrap"
+                >
+                  ▶ Start Battle Now
+                </button>
+              )}
             </div>
 
             {/* Replay requests notice */}

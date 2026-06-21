@@ -4,6 +4,7 @@ import {
   loadRooms,
   updateRoomChallenge,
   updateRoomMaxUsers,
+  startBattle,
   loadRoomSubmissions,
   loadReplayRequests,
   clearReplayRequests,
@@ -95,6 +96,8 @@ export async function PATCH(req: NextRequest) {
       const max = Number(body.maxUsers);
       if (isNaN(max) || max < 1) return NextResponse.json({ error: "Invalid maxUsers" }, { status: 400 });
       await updateRoomMaxUsers(id, max);
+    } else if (action === "start-battle") {
+      await startBattle(id);
     } else {
       return NextResponse.json({ error: "Unknown action" }, { status: 400 });
     }

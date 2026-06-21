@@ -13,6 +13,10 @@ export interface Room {
   activeChallengeId: string | null;
   createdAt: number;
   players: ActivePlayer[];
+  // null while players are still gathering ("Waiting for players"); set to a
+  // timestamp when the battle starts (auto when full, or admin force-start).
+  // The shared timestamp also synchronizes the countdown across all players.
+  battleStartedAt: number | null;
 }
 
 export interface RoomSubmission {
@@ -63,6 +67,7 @@ export async function loadRooms(): Promise<Room[]> {
       activeChallengeId: null,
       createdAt: Date.now(),
       players: [],
+      battleStartedAt: null,
     };
     await saveRooms([defaultRoom]);
     return [defaultRoom];
@@ -82,6 +87,19 @@ export async function updateRoomChallenge(roomId: string, challengeId: string | 
   const room = rooms.find(r => r.id === roomId);
   if (room) {
     room.activeChallengeId = challengeId;
+    // New challenge → new round: players wait again until the battle (re)starts.
+    room.battleStartedAt = null;
+    await saveRooms(rooms);
+  }
+  return room;
+}
+
+// Force-start the battle (admin) — begins the round even if the room isn't full.
+export async function startBattle(roomId: string): Promise<Room | undefined> {
+  const rooms = await loadRooms();
+  const room = rooms.find(r => r.id === roomId);
+  if (room && room.activeChallengeId && room.battleStartedAt == null) {
+    room.battleStartedAt = Date.now();
     await saveRooms(rooms);
   }
   return room;
@@ -112,6 +130,10 @@ export async function registerPlayerHeartbeat(roomId: string, playerName: string
     room.players.push({ playerName: name, lastSeen: now });
   } else {
     return undefined;
+  }
+  // Auto-start the battle once every slot is filled and a challenge is set.
+  if (room.activeChallengeId && room.battleStartedAt == null && room.players.length >= room.maxUsers) {
+    room.battleStartedAt = now;
   }
   await saveRooms(rooms);
   return room;

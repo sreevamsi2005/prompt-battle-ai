@@ -53,6 +53,7 @@ export async function POST(req: NextRequest) {
       name: room.name,
       maxUsers: room.maxUsers,
       activeChallengeId: room.activeChallengeId,
+      battleStartedAt: room.battleStartedAt ?? null,
       challengeDetails,
       players: activePlayersStatus,
       submissions: sortedSubs,
