@@ -21,7 +21,7 @@ interface RoomAdminState {
   challengeDetails: ChallengeDetails | null;
   players: { playerName: string; lastSeen: number }[];
   submissionCount: number;
-  submissions: { playerName: string; score: number; normalizedScore: number; timeTakenToPrompt: number; videoScore?: number; compositeScore?: number; timestamp: number; prompt?: string }[];
+  submissions: { playerName: string; score: number; timeTakenToPrompt: number; videoScore?: number; compositeScore?: number; timestamp: number; prompt?: string }[];
   replayRequests: { roomId: string; playerName: string; timestamp: number }[];
 }
 
@@ -31,12 +31,6 @@ interface PromptListItem {
   difficulty: "easy" | "medium" | "hard";
   prompt: string;
 }
-
-const DIFFICULTY_STYLE: Record<string, string> = {
-  easy: "text-emerald-400 bg-emerald-500/10 border-emerald-500/30",
-  medium: "text-amber-400 bg-amber-500/10 border-amber-500/30",
-  hard: "text-rose-400 bg-rose-500/10 border-rose-500/30",
-};
 
 const MEDAL = ["🥇", "🥈", "🥉"];
 const RANK_STYLE = [
@@ -215,15 +209,16 @@ export default function AdminPage() {
 
   function buildRoundRankings(r: RoomAdminState) {
     const submitted = r.submissions ?? [];
+    const finalOf = (s: { compositeScore?: number; score: number }) => s.compositeScore ?? s.score;
     const submittedNames = new Set(submitted.map(s => s.playerName.toLowerCase()));
     const pending = (r.players ?? [])
       .filter(p => !submittedNames.has(p.playerName.toLowerCase()))
-      .map(p => ({ playerName: p.playerName, score: null as number | null, normalizedScore: null as number | null, timeTakenToPrompt: null as number | null, prompt: undefined as string | undefined, videoScore: undefined as number | undefined, compositeScore: undefined as number | undefined }));
+      .map(p => ({ playerName: p.playerName, score: null as number | null, finalScore: null as number | null, timeTakenToPrompt: null as number | null, prompt: undefined as string | undefined, videoScore: undefined as number | undefined, compositeScore: undefined as number | undefined }));
     const sorted = [...submitted].sort((a, b) =>
-      b.normalizedScore !== a.normalizedScore ? b.normalizedScore - a.normalizedScore : a.timeTakenToPrompt - b.timeTakenToPrompt
+      finalOf(b) !== finalOf(a) ? finalOf(b) - finalOf(a) : a.timeTakenToPrompt - b.timeTakenToPrompt
     );
     return [
-      ...sorted.map(s => ({ playerName: s.playerName, score: s.score, normalizedScore: s.normalizedScore, timeTakenToPrompt: s.timeTakenToPrompt, prompt: s.prompt, videoScore: s.videoScore, compositeScore: s.compositeScore })),
+      ...sorted.map(s => ({ playerName: s.playerName, score: s.score, finalScore: finalOf(s), timeTakenToPrompt: s.timeTakenToPrompt, prompt: s.prompt, videoScore: s.videoScore, compositeScore: s.compositeScore })),
       ...pending,
     ];
   }
@@ -244,14 +239,9 @@ export default function AdminPage() {
               <div className="relative rounded-xl overflow-hidden border border-zinc-700 bg-black min-h-0">
                 <LiveVideo src={heroRoom.challengeDetails!.videoUrl} />
 
-                <div className="absolute top-0 left-0 right-0 p-4 flex items-start justify-between bg-gradient-to-b from-black/80 to-transparent pointer-events-none">
-                  <div>
-                    <p className="text-xs uppercase font-bold text-zinc-400 font-mono tracking-wider">{heroRoom.name}</p>
-                    <p className="text-sm font-bold text-white mt-0.5 font-mono">{heroRoom.challengeDetails!.theme}</p>
-                  </div>
-                  <span className={`rounded px-2 py-0.5 text-[10px] font-bold uppercase font-mono border ${DIFFICULTY_STYLE[heroRoom.challengeDetails!.difficulty]}`}>
-                    {heroRoom.challengeDetails!.difficulty}
-                  </span>
+                <div className="absolute top-0 left-0 right-0 p-4 bg-gradient-to-b from-black/80 to-transparent pointer-events-none">
+                  <p className="text-xs uppercase font-bold text-zinc-400 font-mono tracking-wider">{heroRoom.name}</p>
+                  <p className="text-sm font-bold text-white mt-0.5 font-mono">{heroRoom.challengeDetails!.theme}</p>
                 </div>
 
                 <div className="absolute bottom-4 left-4 flex items-center gap-2 rounded border border-zinc-700 bg-black/90 px-3 py-1.5 text-xs font-semibold text-white backdrop-blur pointer-events-none">
@@ -280,7 +270,7 @@ export default function AdminPage() {
                 <div className="flex-1 space-y-1.5 overflow-y-auto min-h-0 pr-0.5">
                   {buildRoundRankings(heroRoom).length > 0 ? (
                     buildRoundRankings(heroRoom).map((entry, idx) => {
-                      const submitted = entry.normalizedScore !== null;
+                      const submitted = entry.finalScore !== null;
                       const rankStyle = idx < 3 && submitted ? RANK_STYLE[idx] : "border-zinc-800/60 bg-black/30 text-zinc-400";
                       return (
                         <div key={entry.playerName + idx} className={`flex items-center gap-2.5 rounded-lg border px-3 py-2.5 ${rankStyle}`}>
@@ -294,8 +284,8 @@ export default function AdminPage() {
                           </span>
                           {submitted ? (
                             <div className="flex-shrink-0 text-right">
-                              <p className={`text-sm font-bold font-mono leading-none ${idx === 0 ? "text-yellow-300" : ""}`}>{entry.normalizedScore} norm</p>
-                              <p className="text-[10px] text-zinc-500 font-mono mt-0.5">{entry.score}% sim</p>
+                              <p className={`text-sm font-bold font-mono leading-none ${idx === 0 ? "text-yellow-300" : ""}`}>{entry.finalScore} score</p>
+                              <p className="text-[10px] text-zinc-500 font-mono mt-0.5">{entry.score}% prompt</p>
                             </div>
                           ) : (
                             <span className="text-[10px] text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded px-1.5 py-0.5 font-mono animate-pulse flex-shrink-0">
@@ -316,7 +306,7 @@ export default function AdminPage() {
                 {(() => {
                   const rankings = buildRoundRankings(heroRoom);
                   const winner = rankings[0];
-                  if (!winner || winner.normalizedScore === null || !winner.prompt) return null;
+                  if (!winner || winner.finalScore === null || !winner.prompt) return null;
                   const textScore = winner.score ?? 0;
                   const videoScore = winner.videoScore;
                   const finalScore = winner.compositeScore ?? textScore;
@@ -350,8 +340,8 @@ export default function AdminPage() {
                         </div>
                       </div>
                       <div className="flex items-center justify-between">
-                        <p className="text-[10px] text-zinc-500 font-mono">{heroRoom.challengeDetails?.difficulty} challenge</p>
-                        <p className="text-xs font-bold text-yellow-300 font-mono">{winner.normalizedScore} norm</p>
+                        <p className="text-[10px] text-zinc-500 font-mono truncate">{heroRoom.challengeDetails?.theme}</p>
+                        <p className="text-xs font-bold text-yellow-300 font-mono">{winner.finalScore} final</p>
                       </div>
                     </div>
                   );
@@ -590,9 +580,6 @@ export default function AdminPage() {
                       onMouseLeave={e => { const v = e.currentTarget as HTMLVideoElement; v.pause(); v.currentTime = 0; }}
                       className="w-full h-full object-cover"
                     />
-                    <span className={`absolute top-1.5 right-1.5 rounded px-1.5 py-0.5 text-[9px] font-bold uppercase font-mono border ${DIFFICULTY_STYLE[p.difficulty]}`}>
-                      {p.difficulty}
-                    </span>
                   </div>
                   <div className="p-2 flex flex-col gap-2 flex-1">
                     <div>

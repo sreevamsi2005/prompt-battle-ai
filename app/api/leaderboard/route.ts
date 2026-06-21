@@ -16,15 +16,14 @@ export async function GET(req: NextRequest) {
 
 // POST records either a room submission (on submit) or a global entry (when the
 // player chooses to publish to the global leaderboard).
-//   scope: "room"   → body { playerName, similarityScore, normalizedScore, timeTakenToPrompt, roomId, timestamp?, prompt?, email?, challengeId?, videoTag? }
-//   scope: "global" → body { playerName, similarityScore, normalizedScore, timeTakenToPrompt, email? }
+//   scope: "room"   → body { playerName, similarityScore, timeTakenToPrompt, roomId, timestamp?, prompt?, email?, challengeId?, videoTag?, difficulty? }
+//   scope: "global" → body { playerName, similarityScore, timeTakenToPrompt, email?, compositeScore?, videoScore? }
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const {
       playerName,
       similarityScore,
-      normalizedScore,
       timeTakenToPrompt,
       roomId,
       scope,
@@ -39,7 +38,6 @@ export async function POST(req: NextRequest) {
     } = body as {
       playerName?: string;
       similarityScore?: number;
-      normalizedScore?: number;
       timeTakenToPrompt?: number;
       roomId?: string;
       scope?: "room" | "global";
@@ -53,14 +51,16 @@ export async function POST(req: NextRequest) {
       videoScore?: number;
     };
 
-    if (!playerName?.trim() || similarityScore == null || normalizedScore == null) {
+    if (!playerName?.trim() || similarityScore == null) {
       return NextResponse.json(
-        { error: "playerName, similarityScore and normalizedScore required" },
+        { error: "playerName and similarityScore required" },
         { status: 400 }
       );
     }
 
     const safeTime = timeTakenToPrompt ?? 60;
+    // Final score = composite (text+video) when known, else the text score.
+    const finalScore = compositeScore ?? similarityScore;
 
     if (scope === "room") {
       if (!roomId) {
@@ -70,7 +70,6 @@ export async function POST(req: NextRequest) {
         roomId,
         playerName,
         similarityScore,
-        normalizedScore,
         safeTime,
         difficulty ?? "medium",
         timestamp,
@@ -91,15 +90,14 @@ export async function POST(req: NextRequest) {
           difficulty: difficulty ?? "medium",
           similarityScore,
           timeTakenToPrompt: safeTime,
-          normalizedScore,
-          leaderboardScore: normalizedScore,
+          finalScore,
         }).catch(err => console.error("[data-sheet] append failed:", err));
       }
 
       return NextResponse.json(subs);
     }
 
-    const entries = await addEntry(playerName, similarityScore, normalizedScore, safeTime, email, compositeScore, videoScore);
+    const entries = await addEntry(playerName, similarityScore, safeTime, email, compositeScore, videoScore);
     return NextResponse.json(entries);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

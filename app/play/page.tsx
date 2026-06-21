@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import { getPlayerName, setPlayerName } from "@/lib/leaderboard";
 import { formatApiError } from "@/lib/error-stage";
-import { computeNormalizedScore } from "@/lib/scoring";
+import { evaluationRemark } from "@/lib/scoring";
 import type { ScoreResult } from "@/lib/types";
 
 /* ─── Types ─────────────────────────────────────────────────────────────── */
@@ -37,7 +37,7 @@ interface RoomPlayerStatus {
   playerName: string;
   hasSubmitted: boolean;
   score: number | null;
-  normalizedScore: number | null;
+  finalScore: number | null;
 }
 
 interface RoomState {
@@ -48,15 +48,10 @@ interface RoomState {
   battleStartedAt: number | null;
   challengeDetails: Challenge | null;
   players: RoomPlayerStatus[];
-  submissions: { playerName: string; score: number; normalizedScore: number; videoScore?: number; compositeScore?: number; timeTakenToPrompt: number; timestamp: number }[];
+  submissions: { playerName: string; score: number; videoScore?: number; compositeScore?: number; timeTakenToPrompt: number; timestamp: number }[];
 }
 
 /* ─── Constants ─────────────────────────────────────────────────────────── */
-const DIFFICULTY_STYLE = {
-  easy:   "text-emerald-400 bg-emerald-500/10 border-emerald-500/30",
-  medium: "text-amber-400   bg-amber-500/10   border-amber-500/30",
-  hard:   "text-rose-400    bg-rose-500/10    border-rose-500/30",
-};
 
 const GEN_MSGS = [
   "Synthesizing neural assets…",
@@ -355,7 +350,8 @@ export default function PlayPage() {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [requestId, setRequestId] = useState<string | null>(null);
-  const [normalizedScoreEarned, setNormalizedScoreEarned] = useState<number | null>(null);
+  // One-line qualitative feedback from the video-similarity model.
+  const [videoFeedback, setVideoFeedback] = useState<string | null>(null);
   const [replayRequested, setReplayRequested] = useState(false);
   const [goingGlobal, setGoingGlobal] = useState(false);
   const [timeLeft, setTimeLeft] = useState<number | null>(null);
@@ -378,7 +374,7 @@ export default function PlayPage() {
   // Ensures we post to the global leaderboard only once per submission.
   const publishedGlobalRef = useRef(false);
   // Holds score + context needed by the polling effect (avoids stale-closure deps)
-  const pollCtxRef = useRef<{ score: ScoreResult; normalizedScore: number; playerName: string; roomId: string | null; prompt: string; submissionTimestamp: number; challengeId: string; timeTakenToPrompt: number; email: string; videoTag: string; difficulty: "easy" | "medium" | "hard" } | null>(null);
+  const pollCtxRef = useRef<{ score: ScoreResult; playerName: string; roomId: string | null; prompt: string; submissionTimestamp: number; challengeId: string; timeTakenToPrompt: number; email: string; videoTag: string; difficulty: "easy" | "medium" | "hard" } | null>(null);
 
   // Load player name on mount
   useEffect(() => {
@@ -443,8 +439,8 @@ export default function PlayPage() {
             setPrompt("");
             setUserVideo(null);
             setResult(null);
-            setNormalizedScoreEarned(null);
             setVideoScore(null);
+            setVideoFeedback(null);
             setReplayRequested(false);
             setVideoGated(false);
             publishedGlobalRef.current = false;
@@ -511,8 +507,8 @@ export default function PlayPage() {
     setPrompt("");
     setUserVideo(null);
     setResult(null);
-    setNormalizedScoreEarned(null);
     setVideoScore(null);
+    setVideoFeedback(null);
     setError(null);
     setSelectedRoomId(null);
 
@@ -544,7 +540,6 @@ export default function PlayPage() {
     if (publishedGlobalRef.current) return;
     publishedGlobalRef.current = true;
     const ctx = pollCtxRef.current;
-    const difficulty = ctx?.difficulty ?? challenge?.difficulty ?? "medium";
     const textScore = ctx?.score.score ?? result?.score ?? compositeScore;
     try {
       await fetch("/api/leaderboard", {
@@ -556,7 +551,6 @@ export default function PlayPage() {
           similarityScore: textScore,
           compositeScore,
           videoScore: vScore ?? undefined,
-          normalizedScore: computeNormalizedScore(compositeScore, difficulty),
           timeTakenToPrompt: ctx?.timeTakenToPrompt ?? 60,
           email: ctx?.email ?? playerEmail.trim(),
         }),
@@ -571,7 +565,7 @@ export default function PlayPage() {
 
     const finish = async (videoUrl: string | null) => {
       if (cancelled || !pollCtxRef.current) return;
-      const { score, normalizedScore, playerName: name, roomId, prompt: p, submissionTimestamp, timeTakenToPrompt, email, challengeId, videoTag, difficulty } = pollCtxRef.current;
+      const { score, playerName: name, roomId, prompt: p, submissionTimestamp, timeTakenToPrompt, email, challengeId, videoTag, difficulty } = pollCtxRef.current;
       if (roomId) {
         try {
           await fetch("/api/leaderboard", {
@@ -581,7 +575,6 @@ export default function PlayPage() {
               scope: "room",
               playerName: name,
               similarityScore: score.score,
-              normalizedScore,
               timeTakenToPrompt,
               roomId,
               prompt: p,
@@ -596,7 +589,6 @@ export default function PlayPage() {
       }
       if (videoUrl) setUserVideo({ videoUrl, promptUsed: p });
       setResult(score);
-      setNormalizedScoreEarned(normalizedScore);
       setRequestId(null);
       setPhase("results");
     };
@@ -625,6 +617,7 @@ export default function PlayPage() {
             })
             .then(r => r.json())
             .then(vsResult => {
+              if (vsResult.feedback) setVideoFeedback(vsResult.feedback);
               if (vsResult.videoScore != null) {
                 setVideoScore(vsResult.videoScore);
                 const composite = vsResult.compositeScore ?? Math.round(ctx.score.score * 0.5 + vsResult.videoScore * 0.5);
@@ -662,6 +655,7 @@ export default function PlayPage() {
     setSubmitting(true);
     setError(null);
     setVideoGated(false);
+    setVideoFeedback(null);
     publishedGlobalRef.current = false;
 
     try {
@@ -674,7 +668,6 @@ export default function PlayPage() {
       const scoreData = (await scoreRes.json()) as ScoreResult;
       if (!scoreRes.ok) throw new Error(formatApiError(scoreData as any, "Scoring failed."));
 
-      const normalizedScore = challenge ? computeNormalizedScore(scoreData.score, challenge.difficulty) : 0;
       const submissionTimestamp = Date.now();
       const timeTakenToPrompt = challengeStartTimeRef.current
         ? Math.min(90, Math.round((submissionTimestamp - challengeStartTimeRef.current) / 1000))
@@ -682,7 +675,6 @@ export default function PlayPage() {
       const videoTag = challenge?.theme ?? "";
       pollCtxRef.current = {
         score: scoreData,
-        normalizedScore,
         playerName: name,
         roomId: selectedRoomId,
         prompt: prompt.trim(),
@@ -705,7 +697,6 @@ export default function PlayPage() {
                 scope: "room",
                 playerName: name,
                 similarityScore: scoreData.score,
-                normalizedScore,
                 timeTakenToPrompt,
                 roomId: selectedRoomId,
                 email: playerEmail.trim(),
@@ -717,7 +708,6 @@ export default function PlayPage() {
           } catch {}
         }
         setResult(scoreData);
-        setNormalizedScoreEarned(normalizedScore);
         setPhase("results");
         publishGlobalScore(scoreData.score, null);
       };
@@ -905,14 +895,9 @@ export default function PlayPage() {
               </span>
             )}
             {challenge && phase === "playing" && (
-              <>
-                <span className={`rounded px-2.5 py-1 text-xs font-bold uppercase font-mono border ${DIFFICULTY_STYLE[challenge.difficulty]}`}>
-                  {challenge.difficulty}
-                </span>
-                <span className="text-xs font-semibold text-zinc-500 font-mono hidden sm:inline">
-                  Theme: {challenge.theme}
-                </span>
-              </>
+              <span className="text-xs font-semibold text-zinc-500 font-mono hidden sm:inline">
+                Theme: {challenge.theme}
+              </span>
             )}
           </div>
 
@@ -1151,9 +1136,6 @@ export default function PlayPage() {
 
                     {roomState?.challengeDetails && (
                       <div className="mt-4 inline-flex items-center gap-2 rounded border border-zinc-800 bg-black/40 px-3 py-1.5">
-                        <span className={`rounded px-1.5 py-0.5 text-[9px] font-bold uppercase font-mono border ${DIFFICULTY_STYLE[roomState.challengeDetails.difficulty]}`}>
-                          {roomState.challengeDetails.difficulty}
-                        </span>
                         <span className="text-xs text-zinc-300 font-mono">{roomState.challengeDetails.theme}</span>
                       </div>
                     )}
@@ -1378,64 +1360,59 @@ export default function PlayPage() {
                     Reach 70+ prompt similarity to unlock video generation. Try a sharper prompt!
                   </div>
                 )}
-                {/* Score breakdown */}
-                <div className="graphite-card p-4 space-y-3">
-                  <div className="grid grid-cols-3 gap-3">
-                    {/* Prompt score */}
-                    <div className="flex flex-col items-center gap-2 rounded-lg border border-zinc-800 bg-black/40 px-3 py-3">
-                      <p className="text-[10px] uppercase font-bold tracking-wider text-zinc-500 font-mono text-center">Prompt Match</p>
-                      <div className="relative h-14 w-14 flex items-center justify-center">
-                        <svg className="h-14 w-14 -rotate-90" viewBox="0 0 36 36">
-                          <circle cx="18" cy="18" r="16" fill="none" stroke="#27272a" strokeWidth="2.5" />
-                          <motion.circle cx="18" cy="18" r="16" fill="none" stroke="#0066FF" strokeWidth="2.5" strokeLinecap="round" initial={{ strokeDasharray: "0 100" }} animate={{ strokeDasharray: `${result.score} 100` }} transition={{ duration: 1.2, ease: "easeOut" }} />
-                        </svg>
-                        <span className="absolute text-sm font-bold text-white font-mono">{result.score}</span>
-                      </div>
-                      <p className="text-[10px] text-zinc-500 font-mono text-center">text similarity</p>
-                    </div>
-                    {/* Video score */}
-                    <div className="flex flex-col items-center gap-2 rounded-lg border border-zinc-800 bg-black/40 px-3 py-3">
-                      <p className="text-[10px] uppercase font-bold tracking-wider text-zinc-500 font-mono text-center">Visual Match</p>
-                      <div className="relative h-14 w-14 flex items-center justify-center">
-                        <svg className="h-14 w-14 -rotate-90" viewBox="0 0 36 36">
-                          <circle cx="18" cy="18" r="16" fill="none" stroke="#27272a" strokeWidth="2.5" />
-                          {videoScore != null && (
-                            <motion.circle cx="18" cy="18" r="16" fill="none" stroke="#8b5cf6" strokeWidth="2.5" strokeLinecap="round" initial={{ strokeDasharray: "0 100" }} animate={{ strokeDasharray: `${videoScore} 100` }} transition={{ duration: 1.2, ease: "easeOut" }} />
-                          )}
-                        </svg>
-                        {videoScore != null ? (
-                          <span className="absolute text-sm font-bold text-white font-mono">{videoScore}</span>
-                        ) : (
-                          <span className="absolute text-xs font-bold text-zinc-600 font-mono animate-pulse">…</span>
-                        )}
-                      </div>
-                      <p className="text-[10px] text-zinc-500 font-mono text-center">video similarity</p>
-                    </div>
-                    {/* Final composite */}
-                    {(() => {
-                      const final = videoScore != null ? Math.round(result.score * 0.5 + videoScore * 0.5) : result.score;
-                      return (
-                        <div className="flex flex-col items-center gap-2 rounded-lg border border-[#0066FF]/30 bg-[#0066FF]/8 px-3 py-3">
-                          <p className="text-[10px] uppercase font-bold tracking-wider text-[#0066FF]/70 font-mono text-center">Final Score</p>
-                          <div className="relative h-14 w-14 flex items-center justify-center">
-                            <svg className="h-14 w-14 -rotate-90" viewBox="0 0 36 36">
-                              <circle cx="18" cy="18" r="16" fill="none" stroke="#27272a" strokeWidth="2.5" />
-                              <motion.circle cx="18" cy="18" r="16" fill="none" stroke="#0066FF" strokeWidth="2.5" strokeLinecap="round" initial={{ strokeDasharray: "0 100" }} animate={{ strokeDasharray: `${final} 100` }} transition={{ duration: 1.2, ease: "easeOut" }} />
-                            </svg>
-                            <span className="absolute text-sm font-bold text-white font-mono">{final}</span>
+                {/* Final score + evaluation details (one combined score, no separate numbers) */}
+                {(() => {
+                  const finalScore = videoScore != null ? Math.round(result.score * 0.5 + videoScore * 0.5) : result.score;
+                  return (
+                    <div className="graphite-card p-5">
+                      <div className="flex flex-col sm:flex-row items-center gap-5">
+                        {/* Big final-score ring */}
+                        <div className="relative flex-shrink-0 h-28 w-28 flex items-center justify-center">
+                          <svg className="h-28 w-28 -rotate-90" viewBox="0 0 36 36">
+                            <circle cx="18" cy="18" r="16" fill="none" stroke="#27272a" strokeWidth="2.5" />
+                            <motion.circle cx="18" cy="18" r="16" fill="none" stroke="#0066FF" strokeWidth="2.5" strokeLinecap="round" initial={{ strokeDasharray: "0 100" }} animate={{ strokeDasharray: `${finalScore} 100` }} transition={{ duration: 1.2, ease: "easeOut" }} />
+                          </svg>
+                          <div className="absolute flex flex-col items-center">
+                            <span className="text-3xl font-extrabold text-white font-mono leading-none">{finalScore}</span>
+                            <span className="text-[9px] uppercase tracking-wider text-[#0066FF] font-mono mt-1">Final Score</span>
                           </div>
-                          <p className="text-[10px] text-[#0066FF]/60 font-mono text-center">{videoScore != null ? "composite" : "text only"}</p>
                         </div>
-                      );
-                    })()}
-                  </div>
-                  {/* Prompt + feedback */}
-                  <div className="rounded border border-zinc-800 bg-black/30 px-3 py-2.5">
-                    <p className="text-[10px] uppercase font-bold text-zinc-600 font-mono mb-1">Your Prompt</p>
-                    <p className="text-xs text-zinc-300 italic font-mono leading-relaxed">{prompt}</p>
-                    <p className="text-xs text-zinc-500 leading-relaxed mt-1">{result.feedback}</p>
-                  </div>
-                </div>
+                        {/* Headline remark */}
+                        <div className="flex-1 text-center sm:text-left">
+                          <p className="text-base sm:text-lg font-bold text-white leading-snug">{evaluationRemark(finalScore)}</p>
+                          <p className="mt-1.5 text-xs text-zinc-500 font-mono">
+                            {videoScore != null
+                              ? "Based on combined prompt + video similarity"
+                              : userVideo
+                              ? "Calculating video similarity…"
+                              : "Based on prompt similarity"}
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Evaluation details — qualitative remarks (no separate numbers) */}
+                      <div className="mt-4 rounded-lg border border-zinc-800 bg-black/40 p-3.5 space-y-3">
+                        <p className="text-[10px] uppercase font-bold tracking-wider text-zinc-500 font-mono">Evaluation Details</p>
+                        <div className="flex gap-3">
+                          <span className="mt-0.5 text-[10px] font-bold font-mono text-[#0066FF] uppercase w-12 flex-shrink-0">Prompt</span>
+                          <p className="flex-1 text-xs text-zinc-300 leading-relaxed">{result.feedback}</p>
+                        </div>
+                        <div className="flex gap-3 border-t border-zinc-900 pt-3">
+                          <span className="mt-0.5 text-[10px] font-bold font-mono text-[#8b5cf6] uppercase w-12 flex-shrink-0">Video</span>
+                          <p className="flex-1 text-xs text-zinc-300 leading-relaxed">
+                            {videoFeedback ?? (userVideo ? "Analyzing your video against the reference…" : "No video was generated for this attempt.")}
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Your prompt */}
+                      <div className="mt-3 rounded border border-zinc-800 bg-black/30 px-3 py-2.5">
+                        <p className="text-[10px] uppercase font-bold text-zinc-600 font-mono mb-1">Your Prompt</p>
+                        <p className="text-xs text-zinc-300 italic font-mono leading-relaxed">{prompt}</p>
+                      </div>
+                    </div>
+                  );
+                })()}
 
                 {/* Side-by-Side Dual Video */}
                 {userVideo && <DualVideo originalSrc={challenge.videoUrl} userSrc={userVideo.videoUrl} />}

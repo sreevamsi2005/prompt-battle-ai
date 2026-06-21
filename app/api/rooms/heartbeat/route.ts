@@ -32,19 +32,21 @@ export async function POST(req: NextRequest) {
     const submissions = await loadRoomSubmissions(roomId);
     const replayRequests = await loadReplayRequests(roomId);
 
+    const finalOf = (s: { compositeScore?: number; score: number }) => s.compositeScore ?? s.score;
+
     const activePlayersStatus = room.players.map(p => {
       const sub = submissions.find(s => s.playerName.toLowerCase() === p.playerName.toLowerCase());
       return {
         playerName: p.playerName,
         hasSubmitted: !!sub,
         score: sub ? sub.score : null,
-        normalizedScore: sub ? sub.normalizedScore : null,
+        finalScore: sub ? finalOf(sub) : null,
       };
     });
 
-    // Sort submissions: normalizedScore DESC, timeTakenToPrompt ASC
+    // Sort submissions by final score DESC, timeTakenToPrompt ASC
     const sortedSubs = [...submissions].sort((a, b) => {
-      if (b.normalizedScore !== a.normalizedScore) return b.normalizedScore - a.normalizedScore;
+      if (finalOf(b) !== finalOf(a)) return finalOf(b) - finalOf(a);
       return a.timeTakenToPrompt - b.timeTakenToPrompt;
     });
 

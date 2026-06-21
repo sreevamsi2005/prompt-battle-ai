@@ -5,9 +5,11 @@ export async function loadLeaderboard(): Promise<LeaderboardEntry[]> {
   return blobGet<LeaderboardEntry[]>("leaderboard", "entries", []);
 }
 
+// Rank by final score (composite text+video; text-only until video arrives).
+const finalOf = (e: LeaderboardEntry) => e.compositeScore ?? e.similarityScore;
 function sortLeaderboard(entries: LeaderboardEntry[]): LeaderboardEntry[] {
   return [...entries].sort((a, b) => {
-    if (b.normalizedScore !== a.normalizedScore) return b.normalizedScore - a.normalizedScore;
+    if (finalOf(b) !== finalOf(a)) return finalOf(b) - finalOf(a);
     return a.timeTakenToPrompt - b.timeTakenToPrompt;
   });
 }
@@ -23,7 +25,6 @@ export async function clearLeaderboard(): Promise<void> {
 export async function addEntry(
   playerName: string,
   similarityScore: number,
-  normalizedScore: number,
   timeTakenToPrompt: number,
   email?: string,
   compositeScore?: number,
@@ -35,7 +36,6 @@ export async function addEntry(
       {
         playerName: playerName.trim() || "Booth Player",
         similarityScore,
-        normalizedScore,
         timeTakenToPrompt,
         timestamp: Date.now(),
         ...(email ? { email } : {}),

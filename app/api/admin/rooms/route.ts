@@ -33,11 +33,11 @@ async function enrichRooms(rooms: Awaited<ReturnType<typeof loadRooms>>) {
         ...room,
         challengeDetails: buildChallengeDetails(room.activeChallengeId),
         submissionCount: submissions.length,
-        submissions: submissions.sort((a, b) =>
-          b.normalizedScore !== a.normalizedScore
-            ? b.normalizedScore - a.normalizedScore
-            : a.timeTakenToPrompt - b.timeTakenToPrompt
-        ),
+        submissions: submissions.sort((a, b) => {
+          const fa = a.compositeScore ?? a.score;
+          const fb = b.compositeScore ?? b.score;
+          return fb !== fa ? fb - fa : a.timeTakenToPrompt - b.timeTakenToPrompt;
+        }),
         replayRequests: replayRequests.sort((a, b) => a.timestamp - b.timestamp),
       };
     })

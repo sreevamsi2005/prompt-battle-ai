@@ -8,10 +8,9 @@ export interface DataSheetRow {
   videoId: string;
   videoTag: string;
   difficulty: string;
-  similarityScore: number;
+  similarityScore: number;   // text/prompt similarity
   timeTakenToPrompt: number;
-  normalizedScore: number;
-  leaderboardScore: number;
+  finalScore: number;        // text+video composite (the recorded final score)
 }
 
 export async function appendDataSheetRow(row: DataSheetRow): Promise<void> {
@@ -26,7 +25,7 @@ export function toCSV(rows: DataSheetRow[]): string {
   const headers = [
     "id", "timestamp", "playerName", "email",
     "videoId", "videoTag", "difficulty", "similarityScore",
-    "timeTakenToPrompt", "normalizedScore", "leaderboardScore",
+    "timeTakenToPrompt", "finalScore",
   ];
   const escape = (v: string | number) =>
     typeof v === "number" ? String(v) : `"${String(v).replace(/"/g, '""')}"`;
@@ -44,8 +43,7 @@ export function toCSV(rows: DataSheetRow[]): string {
         escape(r.difficulty ?? ""),
         r.similarityScore,
         r.timeTakenToPrompt,
-        r.normalizedScore,
-        r.leaderboardScore,
+        r.finalScore,
       ].join(",")
     ),
   ].join("\n");

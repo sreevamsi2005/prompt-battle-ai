@@ -1,154 +1,85 @@
 # How Scoring Works — PromptBattle AI
 
-This is the complete, plain-English reference for how a player's score is calculated,
-from the moment they submit a prompt to where the number shows up on the leaderboard.
+Plain-English reference for how a player's score is calculated.
 
 ---
 
 ## The big picture
 
 A player watches a reference video, guesses the prompt that made it, and submits.
-We produce **four numbers**:
+We produce **three numbers**, but only the **final score** is shown and ranked:
 
-| Number | Range | What it measures |
-|--------|-------|------------------|
-| **Text similarity** | 0–100 | How close their prompt is to the original prompt |
-| **Video similarity** | 0–100 | How close *their generated video* looks to the reference video |
-| **Composite (final) score** | 0–100 | The blend of the two above — the "real" performance |
-| **Normalized score** | 0–100 | The composite, adjusted for difficulty so it's fair to compare across easy/medium/hard. **Used only for ranking the leaderboard.** |
+| Number | Range | What it measures | Shown? |
+|--------|-------|------------------|--------|
+| Prompt (text) similarity | 0–100 | How close their prompt is to the original prompt | Used internally; surfaced only as a remark |
+| Video similarity | 0–100 | How close *their generated video* looks to the reference | Used internally; surfaced only as a remark |
+| **Final score** | 0–100 | **The blend of the two above — the single score** | ✅ everywhere |
 
----
-
-## 1. Text similarity (0–100)
-
-- **Where:** `app/api/score/route.ts`
-- The player's prompt is compared to the challenge's original prompt by an LLM
-  (OpenAI, model from `OPENAI_MODEL`; falls back to Gemini, then a local mock if no
-  API key is set).
-- The model returns `{ score: 0–100, feedback }`.
-- Guideline it follows: 90–100 = nearly identical meaning, 70–89 = strong overlap,
-  40–69 = partial, 0–39 = different concept.
-
-## 2. Video similarity (0–100)
-
-- **Where:** `app/api/video-similarity/route.ts` + `lib/video-analysis.ts`
-- After the player's prompt generates a video (via fal.ai), we:
-  1. Extract 4 frames each from the **reference** video and the **player's** video
-     (using ffmpeg).
-  2. Send both sets of frames to a vision model (`OPENAI_MODEL`) which scores how
-     closely they match on theme, subject, color, mood, and style → 0–100.
-- This runs in the background after results appear; the video score fills in a moment
-  later (the results screen shows "…" until it arrives).
-
-## 3. Composite (final) score (0–100)
-
-The two similarities are blended **50/50**:
-
-```
-composite = round(textScore × 0.5 + videoScore × 0.5)
-```
-
-- **Where:** `lib/rooms.ts` and `app/api/video-similarity/route.ts`
-- If the video score never arrives (e.g. generation failed), the composite is just
-  the text score.
-- This is the number shown to the player on the results screen ("Final Score") and in
-  the room standings.
+There is **no difficulty normalization** and difficulty is **not** shown anywhere
+(it's kept in the data export only, as a record).
 
 ---
 
-## 4. Normalized score (0–100) — the fairness layer
+## 1. Prompt (text) similarity — `app/api/score/route.ts`
+An LLM compares the player's prompt to the challenge's original prompt and returns
+`{ score: 0–100, feedback }`. The `feedback` becomes the "Prompt" remark on results.
 
-**The problem it solves:** easy challenges are easier to score high on, hard
-challenges are harder. If we ranked the leaderboard by raw composite, easy players
-would unfairly beat hard players. Normalization fixes that.
+## 2. Video similarity — `app/api/video-similarity/route.ts` + `lib/video-analysis.ts`
+After the player's video generates (fal.ai), we extract 4 frames each from the
+reference and the player's video and ask a vision model to score how closely they
+match (theme, subject, color, mood, style) → `{ score: 0–100, feedback }`. The
+`feedback` becomes the "Video" remark on results. This runs in the background, so
+the final score updates a moment after results appear.
 
-**Where:** `lib/scoring.ts` → `computeNormalizedScore()`
-
-### The formula
-
-Each difficulty has an expected **average ("par")** score:
-
-| Difficulty | Par average |
-|------------|-------------|
-| easy | 80 |
-| medium | 70 |
-| hard | 60 |
-
-The normalized score rescales the composite so that the **hardest** difficulty tops
-out at 100, and easier difficulties scale down proportionally:
+## 3. Final score (the only score shown) — `lib/scoring.ts` → `computeFinalScore`
 
 ```
-normalized = round( clamp( composite × 60 / parAverage , 0, 100 ) )
+finalScore = round(textScore * 0.5 + videoScore * 0.5)
 ```
 
-(60 is the hard par — the smallest average — so hard maps 1:1 to 0–100. This is the
-exact form of "divide the old 0–167 score by its max ~1.67".)
+- If no video was generated (e.g. solo prompt ≤70, or generation failed/skipped),
+  the final score is just the text score.
+- This single number is shown on the results screen and is the **ranking metric**
+  on every leaderboard (ties broken by fastest prompt time).
 
-### What this produces
-
-**Maximum possible score per difficulty:**
-
-| Difficulty | A perfect run (composite 100) scores |
-|------------|--------------------------------------|
-| easy | **75** |
-| medium | **86** |
-| hard | **100** |
-
-**Hitting "par" gives everyone the same score** (this is the fairness guarantee):
-
-| Difficulty | Composite at par | Normalized |
-|------------|------------------|------------|
-| easy | 80 | **60** |
-| medium | 70 | **60** |
-| hard | 60 | **60** |
-
-So:
-- Two players who each perform *averagely for their difficulty* tie at 60 — fair.
-- A flawless **easy** run (75) can **never** outrank a flawless **hard** run (100) —
-  the injustice we wanted to prevent.
-- Nothing ever exceeds 100.
-
-### Worked examples
-
-| Raw composite | easy | medium | hard |
-|---------------|------|--------|------|
-| 100 | 75 | 86 | 100 |
-| 80 | 60 | 69 | 80 |
-| 60 | 45 | 51 | 60 |
-| 0 | 0 | 0 | 0 |
+### Evaluation details (results screen)
+Instead of separate numbers, results show:
+- the **final score** in one ring,
+- a one-line **overall remark** (`evaluationRemark` in `lib/scoring.ts`), and
+- an **Evaluation Details** box with a qualitative **Prompt** remark (text feedback)
+  and **Video** remark (vision feedback).
 
 ---
 
-## Where each number is shown
+## Where the final score is used
 
 | Screen | Shows |
 |--------|-------|
-| Player **results** screen | Text %, Video %, Final composite % (no normalized score) |
-| **Room standings** (live) | Composite % |
-| **Leaderboard** (`/leaderboard`) | **Normalized score** (the fair, cross-difficulty ranking) |
-| **CSV export** (`/api/export`) | Everything: similarity, normalized, difficulty, time, etc. |
+| Player **results** | Final score + Prompt/Video remarks (no separate numbers, no difficulty) |
+| **Room standings** (live) | Final score |
+| **Leaderboard** (`/leaderboard`) | Final score (ranks by it) |
+| **CSV export** (`/api/export`) | similarityScore (text), finalScore, difficulty (record only), time, etc. |
 
-**Ranking / tie-break:** leaderboards sort by **normalized score (high → low)**, and
-ties are broken by **time taken to prompt (fast → slow)**.
+**Ranking / tie-break:** leaderboards sort by **final score (high → low)**, ties by
+**time taken to prompt (fast → slow)**.
+
+---
+
+## Multiplayer battle flow
+- Players who join sit on a **"Waiting for Players"** screen.
+- The battle starts (challenge video + 90s timer) **only when the room fills**, or
+  when the **admin force-starts** it. A shared start timestamp keeps the 90s
+  countdown synchronized across all players.
 
 ---
 
 ## Resetting scores (booth operator)
-
 - **Reset Scores** (admin, per room): clears the current room's submissions.
 - **Reset Global Leaderboard** (admin): clears the global leaderboard entirely.
-  Use this before an event so no old/test scores remain.
-
-Both live in the admin dashboard. The global reset calls
-`DELETE /api/leaderboard` (admin-password protected).
 
 ---
 
 ## Tuning
-
-All the knobs live in **`lib/scoring.ts`**:
-- `LEVEL_AVERAGES` — the par averages per difficulty (easy 80 / medium 70 / hard 60).
-  Changing these changes the difficulty ceilings automatically (the hardest level
-  always tops out at 100).
-- The 50/50 composite blend lives in `lib/rooms.ts` and
-  `app/api/video-similarity/route.ts` (`textScore × 0.5 + videoScore × 0.5`).
+- The 50/50 blend lives in `lib/scoring.ts` (`computeFinalScore`), `lib/rooms.ts`,
+  and `app/api/video-similarity/route.ts`.
+- Result remarks: `evaluationRemark` in `lib/scoring.ts`.

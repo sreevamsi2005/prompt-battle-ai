@@ -1,5 +1,4 @@
 import { blobGet, blobSet, blobUpdate } from "./blob-storage";
-import { computeNormalizedScore } from "./scoring";
 
 export interface ActivePlayer {
   playerName: string;
@@ -21,12 +20,11 @@ export interface Room {
 
 export interface RoomSubmission {
   playerName: string;
-  score: number;            // text similarity 0-100
-  normalizedScore: number;  // (compositeScore / level_average) * 100, recalculated when video arrives
+  score: number;            // text/prompt similarity 0-100
   timeTakenToPrompt: number; // seconds
-  difficulty: "easy" | "medium" | "hard";
-  videoScore?: number;
-  compositeScore?: number;  // text*0.5 + video*0.5
+  difficulty: "easy" | "medium" | "hard";  // kept for records only (not scored)
+  videoScore?: number;      // visual similarity 0-100 (once analyzed)
+  compositeScore?: number;  // FINAL score = text*0.5 + video*0.5 (text only until video arrives)
   timestamp: number;
   roomId: string;
   email?: string;
@@ -42,9 +40,14 @@ export interface ReplayRequest {
   timestamp: number;
 }
 
+// Rank by the final score (composite text+video; text-only until video arrives),
+// breaking ties by who prompted fastest.
+function finalOf(s: RoomSubmission): number {
+  return s.compositeScore ?? s.score;
+}
 function sortSubmissions(subs: RoomSubmission[]): RoomSubmission[] {
   return [...subs].sort((a, b) => {
-    if (b.normalizedScore !== a.normalizedScore) return b.normalizedScore - a.normalizedScore;
+    if (finalOf(b) !== finalOf(a)) return finalOf(b) - finalOf(a);
     return a.timeTakenToPrompt - b.timeTakenToPrompt;
   });
 }
@@ -148,7 +151,6 @@ export async function addRoomSubmission(
   roomId: string,
   playerName: string,
   score: number,
-  normalizedScore: number,
   timeTakenToPrompt: number,
   difficulty: "easy" | "medium" | "hard",
   timestamp?: number,
@@ -163,7 +165,8 @@ export async function addRoomSubmission(
       roomId,
       playerName: name,
       score,
-      normalizedScore,
+      // Final score starts as the text score; updated to text+video when analyzed.
+      compositeScore: score,
       timeTakenToPrompt,
       difficulty,
       timestamp: ts,
@@ -196,7 +199,6 @@ export async function updateRoomSubmissionWithVideoScore(
     if (submission) {
       submission.videoScore = videoScore;
       submission.compositeScore = compositeScore;
-      submission.normalizedScore = computeNormalizedScore(compositeScore, submission.difficulty ?? "medium");
       submission.videoAnalysisStatus = "completed";
     }
     return current;

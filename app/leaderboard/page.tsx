@@ -12,16 +12,16 @@ interface RoomListItem {
   name: string;
 }
 
-// Keep only entries on the current schema (they always carry numeric similarity +
-// normalized scores). Legacy `{score}`-only records predate the 0–100 scale and
-// can't be shown correctly, so they're dropped rather than displayed misleadingly.
-// Sort by normalized score desc, then fastest time.
+// Keep only entries on the current schema (numeric similarityScore). Legacy
+// records that predate it are dropped rather than shown misleadingly. Rank by the
+// final score (composite text+video, or text-only until video arrives).
+const finalOf = (e: LeaderboardEntry) => e.compositeScore ?? e.similarityScore;
 function normalizeAndSort(arr: LeaderboardEntry[]): LeaderboardEntry[] {
   return arr
-    .filter((e) => typeof e.normalizedScore === "number" && typeof e.similarityScore === "number")
+    .filter((e) => typeof e.similarityScore === "number")
     .sort((a, b) =>
-      b.normalizedScore !== a.normalizedScore
-        ? b.normalizedScore - a.normalizedScore
+      finalOf(b) !== finalOf(a)
+        ? finalOf(b) - finalOf(a)
         : (a.timeTakenToPrompt ?? 0) - (b.timeTakenToPrompt ?? 0)
     );
 }
