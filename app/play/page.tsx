@@ -943,9 +943,10 @@ export default function PlayPage() {
                 initial={{ opacity: 0, scale: 0.98 }}
                 animate={{ opacity: 1, scale: 1 }}
                 exit={{ opacity: 0, scale: 0.98 }}
-                className="grid gap-6 md:grid-cols-2 max-w-4xl mx-auto w-full my-auto"
+                className="flex items-center justify-center w-full my-auto"
               >
-                {/* Name Input & Solo Play */}
+                {/* Solo / Practice mode — temporarily disabled (flip false → true to restore) */}
+                {false && (
                 <motion.div
                   whileHover={{ y: -3 }}
                   className="graphite-card p-6 flex flex-col justify-between"
@@ -998,14 +999,15 @@ export default function PlayPage() {
                     </button>
                   </div>
                 </motion.div>
+                )}
 
-                {/* Multiplayer Booth — single room, slot-based join */}
+                {/* Sync Multiplayer — single centered card */}
                 <motion.div
                   whileHover={{ y: -3 }}
-                  className="graphite-card p-6 flex flex-col"
+                  className="graphite-card p-6 flex flex-col w-full max-w-md"
                 >
                   <div className="flex items-center justify-between">
-                    <h2 className="text-lg font-bold text-white tracking-tight">2. Sync Multiplayer</h2>
+                    <h2 className="text-lg font-bold text-white tracking-tight">Sync Multiplayer</h2>
                     <button
                       onClick={() => fetchRooms()}
                       disabled={loadingRooms}
@@ -1018,7 +1020,7 @@ export default function PlayPage() {
                     </button>
                   </div>
                   <p className="mt-2 text-sm leading-relaxed text-zinc-400">
-                    Join the live battle session — you'll be placed in the first open slot.
+                    Join the live battle session — you'll be placed in the next open spot.
                   </p>
 
                   {/* Multiplayer participant details (separate from solo) */}
@@ -1068,59 +1070,20 @@ export default function PlayPage() {
                       );
                     }
 
-                    const firstFreeSlot = room.slots.findIndex(s => s === null);
-                    const isFull = firstFreeSlot === -1;
+                    const isFull = !room.slots.some(s => s === null);
 
                     return (
-                      <div className="mt-5 flex flex-col gap-4 flex-1">
-                        {/* Slot grid */}
-                        <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${Math.min(room.maxUsers, 4)}, 1fr)` }}>
-                          {room.slots.map((occupant, idx) => {
-                            const slotNum = idx + 1;
-                            const isOccupied = occupant !== null;
-                            return (
-                              <div
-                                key={idx}
-                                className={`relative flex flex-col items-center justify-center rounded border px-2 py-3 text-center transition ${
-                                  isOccupied
-                                    ? "border-zinc-700 bg-zinc-900/80"
-                                    : "border-dashed border-[#0066FF]/40 bg-[#0066FF]/5"
-                                }`}
-                              >
-                                <span className={`text-[10px] font-bold font-mono uppercase tracking-wider mb-1 ${isOccupied ? "text-zinc-600" : "text-[#0066FF]/60"}`}>
-                                  Slot {slotNum}
-                                </span>
-                                {isOccupied ? (
-                                  <>
-                                    <span className="h-2 w-2 rounded-full bg-emerald-400 mb-1" />
-                                    <span className="text-xs font-semibold text-white font-mono truncate w-full text-center px-1">{occupant}</span>
-                                    <span className="text-[10px] text-zinc-500 font-mono mt-0.5">occupied</span>
-                                  </>
-                                ) : (
-                                  <>
-                                    <span className="h-2 w-2 rounded-full bg-[#0066FF]/40 animate-pulse mb-1" />
-                                    <span className="text-xs text-[#0066FF]/70 font-mono">free</span>
-                                  </>
-                                )}
-                              </div>
-                            );
-                          })}
-                        </div>
-
-                        {/* Join button */}
+                      <div className="mt-5">
                         <button
                           onClick={() => handleJoinRoom(room)}
                           disabled={isFull}
-                          className="btn-primary w-full py-2.5 text-sm font-bold disabled:opacity-40 disabled:cursor-not-allowed"
+                          className="btn-primary w-full py-3 text-sm font-bold uppercase tracking-wider disabled:opacity-40 disabled:cursor-not-allowed"
                         >
-                          {isFull
-                            ? `Room Full (${room.maxUsers}/${room.maxUsers})`
-                            : `Join Battle → Slot ${firstFreeSlot + 1}`}
+                          {isFull ? `Room Full (${room.maxUsers}/${room.maxUsers})` : "Join Now"}
                         </button>
-
                         {isFull && (
-                          <p className="text-[11px] text-zinc-500 font-mono text-center -mt-2">
-                            All {room.maxUsers} slots taken. Wait for a player to leave or ask the admin to increase capacity.
+                          <p className="mt-2 text-[11px] text-zinc-500 font-mono text-center">
+                            All {room.maxUsers} spots are taken — please wait for one to free up.
                           </p>
                         )}
                       </div>
