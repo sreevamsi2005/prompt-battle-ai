@@ -7,11 +7,6 @@ import Leaderboard from "@/components/Leaderboard";
 import { getPlayerName } from "@/lib/leaderboard";
 import type { LeaderboardEntry } from "@/lib/types";
 
-interface RoomListItem {
-  id: string;
-  name: string;
-}
-
 // Keep only entries on the current schema (numeric similarityScore). Legacy
 // records that predate it are dropped rather than shown misleadingly. Rank by the
 // final score (composite text+video, or text-only until video arrives).
@@ -29,28 +24,12 @@ function normalizeAndSort(arr: LeaderboardEntry[]): LeaderboardEntry[] {
 export default function LeaderboardPage() {
   const [entries, setEntries] = useState<LeaderboardEntry[]>([]);
   const [playerName, setPlayerName] = useState<string | null>(null);
-  
-  // Filtering states
-  const [rooms, setRooms] = useState<RoomListItem[]>([]);
-  const [filterRoomId, setFilterRoomId] = useState<string>("global");
 
-  // Load rooms filter dropdown
-  useEffect(() => {
-    fetch("/api/rooms")
-      .then(res => res.json())
-      .then(data => setRooms(data))
-      .catch(err => console.error("Failed to load rooms list:", err));
-  }, []);
-
-  // Fetch leaderboard based on active filter
+  // Always show the global leaderboard.
   useEffect(() => {
     const load = async () => {
       try {
-        const url = filterRoomId === "global" 
-          ? "/api/leaderboard" 
-          : `/api/leaderboard?roomId=${filterRoomId}`;
-        
-        const res = await fetch(url);
+        const res = await fetch("/api/leaderboard");
         const data = (await res.json()) as LeaderboardEntry[];
         setEntries(normalizeAndSort(data));
       } catch (err) {
@@ -61,41 +40,20 @@ export default function LeaderboardPage() {
 
     load();
     setPlayerName(getPlayerName());
-  }, [filterRoomId]);
+  }, []);
 
   return (
     <div className="relative min-h-[calc(100vh-3.5rem)] py-10">
       <div className="mx-auto max-w-3xl px-4">
-        
-        {/* Header section */}
-        <div className="mb-8 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-zinc-900 pb-6">
-          <div>
-            <p className="text-[10px] uppercase tracking-wider font-semibold text-zinc-500 font-mono">
-              Booth Scoreboards
-            </p>
-            <h1 className="text-xl font-bold tracking-tight text-white mt-1">
-              Leaderboard
-            </h1>
-          </div>
 
-          {/* Room Filter Dropdown */}
-          <div className="flex items-center gap-2">
-            <span className="text-[10px] font-semibold text-zinc-500 font-mono uppercase">Filter:</span>
-            <select
-              value={filterRoomId}
-              onChange={(e) => setFilterRoomId(e.target.value)}
-              className="rounded border border-zinc-800 bg-[#09090b] text-xs text-white px-3 py-1.5 focus:border-[#0066FF] focus:outline-none"
-            >
-              <option value="global">Global Standings (All-Time)</option>
-              <optgroup label="Multiplayer Booth Rooms">
-                {rooms.map(room => (
-                  <option key={room.id} value={room.id}>
-                    {room.name}
-                  </option>
-                ))}
-              </optgroup>
-            </select>
-          </div>
+        {/* Header section */}
+        <div className="mb-8 border-b border-zinc-900 pb-6">
+          <p className="text-[10px] uppercase tracking-wider font-semibold text-zinc-500 font-mono">
+            Booth Scoreboards
+          </p>
+          <h1 className="text-xl font-bold tracking-tight text-white mt-1">
+            Leaderboard
+          </h1>
         </div>
 
         {/* Leaderboard Table / Podium */}
