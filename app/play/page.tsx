@@ -1122,14 +1122,11 @@ export default function PlayPage() {
                   className="flex flex-col items-center justify-center flex-1 py-12 px-4 my-auto"
                 >
                   <div className="graphite-card p-8 w-full max-w-md text-center">
-                    {/* DataHack Summit spinning orb */}
+                    {/* DataHack Summit spinning orb (logo only) */}
                     <div className="dhs-orb mx-auto h-28 w-28 mb-3">
                       <span className="dhs-orb__ring" />
                       <span className="dhs-orb__ring dhs-orb__ring--inner" />
                       <span className="dhs-orb__core" />
-                      <div className="absolute inset-0 flex items-center justify-center font-mono font-extrabold">
-                        <span className="text-3xl text-white">{joined}</span><span className="text-zinc-500 text-base">/{max}</span>
-                      </div>
                     </div>
 
                     {/* Summit branding */}
@@ -1141,6 +1138,13 @@ export default function PlayPage() {
                     <h2 className="text-lg font-bold text-white">
                       {hasChallenge ? "Waiting for Players" : "Waiting for the Host"}
                     </h2>
+
+                    {/* Player count — shown separately from the orb */}
+                    <p className="mt-2 font-mono font-bold">
+                      <span className="text-2xl text-[#0066FF]">{joined}</span>
+                      <span className="text-zinc-500 text-lg"> / {max}</span>
+                      <span className="text-zinc-500 text-xs font-normal ml-1.5">players joined</span>
+                    </p>
                     <p className="mt-2 text-xs sm:text-sm text-zinc-400 leading-relaxed">
                       {hasChallenge
                         ? "The battle begins automatically once everyone joins — or when the host starts it."
