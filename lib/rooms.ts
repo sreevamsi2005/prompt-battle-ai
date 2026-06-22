@@ -54,7 +54,11 @@ function sortSubmissions(subs: RoomSubmission[]): RoomSubmission[] {
 
 function cleanupInactivePlayers(room: Room): Room {
   const now = Date.now();
-  return { ...room, players: (room.players ?? []).filter(p => now - p.lastSeen < 15000) };
+  const players = (room.players ?? []).filter(p => now - p.lastSeen < 15000);
+  // When the room empties, end the battle so the next gathering starts fresh
+  // (waiting for players) instead of inheriting a stale "started" timestamp.
+  const battleStartedAt = players.length === 0 ? null : room.battleStartedAt;
+  return { ...room, players, battleStartedAt };
 }
 
 export async function loadRooms(): Promise<Room[]> {
@@ -76,7 +80,10 @@ export async function loadRooms(): Promise<Room[]> {
     return [defaultRoom];
   }
 
-  const changed = rooms.some((r, i) => (r.players?.length ?? 0) !== (cleaned[i].players?.length ?? 0));
+  const changed = rooms.some((r, i) =>
+    (r.players?.length ?? 0) !== (cleaned[i].players?.length ?? 0) ||
+    (r.battleStartedAt ?? null) !== (cleaned[i].battleStartedAt ?? null)
+  );
   if (changed) await saveRooms(cleaned);
   return cleaned;
 }
@@ -125,6 +132,7 @@ export async function registerPlayerHeartbeat(roomId: string, playerName: string
   room.players = room.players ?? [];
   const now = Date.now();
   const name = playerName.trim();
+  const wasEmpty = room.players.length === 0;
   const idx = room.players.findIndex(p => p.playerName.toLowerCase() === name.toLowerCase());
   if (idx !== -1) {
     room.players[idx].lastSeen = now;
@@ -133,6 +141,11 @@ export async function registerPlayerHeartbeat(roomId: string, playerName: string
     room.players.push({ playerName: name, lastSeen: now });
   } else {
     return undefined;
+  }
+  // First player into an empty room begins a fresh round: clear any stale
+  // battle timestamp so they wait (and auto-start can fire again when full).
+  if (wasEmpty) {
+    room.battleStartedAt = null;
   }
   // Auto-start the battle once every slot is filled and a challenge is set.
   if (room.activeChallengeId && room.battleStartedAt == null && room.players.length >= room.maxUsers) {

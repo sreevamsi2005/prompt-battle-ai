@@ -429,7 +429,9 @@ export default function PlayPage() {
 
           // A "round" is one challenge + one battle start. When either changes,
           // it's a fresh round: reset state and route to waiting / playing.
-          const started = data.battleStartedAt != null;
+          // Treat a battle as live only within its 90s window — a stale timestamp
+          // from a previous round must not skip the waiting screen or show "time's up".
+          const started = data.battleStartedAt != null && Date.now() - data.battleStartedAt < 90_000;
           const roundKey = `${data.activeChallengeId ?? ""}:${data.battleStartedAt ?? ""}`;
           if (roundKey !== roundKeyRef.current) {
             roundKeyRef.current = roundKey;
