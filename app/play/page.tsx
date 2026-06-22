@@ -1122,14 +1122,21 @@ export default function PlayPage() {
                   className="flex flex-col items-center justify-center flex-1 py-12 px-4 my-auto"
                 >
                   <div className="graphite-card p-8 w-full max-w-md text-center">
-                    {/* Animated count ring */}
-                    <div className="relative mx-auto h-20 w-20 mb-5">
-                      <div className="absolute inset-0 rounded-full border border-dashed border-[#0066FF]/30 animate-spin" style={{ animationDuration: "6s" }} />
-                      <div className="absolute inset-1.5 rounded-full border border-t-[#0066FF] border-r-transparent border-b-transparent border-l-[#0066FF] animate-spin" style={{ animationDuration: "1.5s" }} />
-                      <div className="absolute inset-0 flex items-center justify-center font-mono font-extrabold text-[#0066FF]">
-                        <span className="text-2xl">{joined}</span><span className="text-zinc-600 text-base">/{max}</span>
+                    {/* DataHack Summit spinning orb */}
+                    <div className="dhs-orb mx-auto h-28 w-28 mb-3">
+                      <span className="dhs-orb__ring" />
+                      <span className="dhs-orb__ring dhs-orb__ring--inner" />
+                      <span className="dhs-orb__core" />
+                      <div className="absolute inset-0 flex items-center justify-center font-mono font-extrabold">
+                        <span className="text-3xl text-white">{joined}</span><span className="text-zinc-500 text-base">/{max}</span>
                       </div>
                     </div>
+
+                    {/* Summit branding */}
+                    <p className="text-[10px] uppercase tracking-[0.2em] font-mono font-bold mb-4">
+                      <span className="dhs-wordmark">DataHack Summit</span>
+                      <span className="text-zinc-600"> · 7th Edition</span>
+                    </p>
 
                     <h2 className="text-lg font-bold text-white">
                       {hasChallenge ? "Waiting for Players" : "Waiting for the Host"}

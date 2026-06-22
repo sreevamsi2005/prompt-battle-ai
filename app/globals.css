@@ -207,3 +207,56 @@ body {
 .sync-dot {
   animation: pulse-sync 2s infinite ease-in-out;
 }
+
+/* ── DataHack Summit branding (booth is part of the summit) ─────────────── */
+:root {
+  --dhs-c1: #00e1ff; /* cyan */
+  --dhs-c2: #00c2d4;
+  --dhs-c3: #4a3cd9; /* indigo */
+  --dhs-c4: #7c5fff; /* purple */
+}
+
+/* Gradient wordmark for "DataHack Summit" lockups */
+.dhs-wordmark {
+  background: linear-gradient(90deg, var(--dhs-c1), var(--dhs-c4));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* Spinning summit orb — blue/cyan→purple conic rings around a glowing core */
+@keyframes dhs-spin { to { transform: rotate(360deg); } }
+@keyframes dhs-breathe { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
+
+.dhs-orb {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.dhs-orb__ring,
+.dhs-orb__core {
+  position: absolute;
+  border-radius: 9999px;
+  pointer-events: none;
+}
+.dhs-orb__ring {
+  inset: 0;
+  background: conic-gradient(from 0deg, var(--dhs-c1), var(--dhs-c4), var(--dhs-c3), var(--dhs-c2), var(--dhs-c1));
+  -webkit-mask: radial-gradient(closest-side, transparent 63%, #000 65%);
+          mask: radial-gradient(closest-side, transparent 63%, #000 65%);
+  animation: dhs-spin 3s linear infinite;
+  filter: drop-shadow(0 0 12px rgba(0, 225, 255, 0.5));
+}
+.dhs-orb__ring--inner {
+  inset: 15%;
+  background: conic-gradient(from 180deg, var(--dhs-c4), var(--dhs-c1), var(--dhs-c4));
+  -webkit-mask: radial-gradient(closest-side, transparent 58%, #000 60%);
+          mask: radial-gradient(closest-side, transparent 58%, #000 60%);
+  animation: dhs-spin 2s linear infinite reverse, dhs-breathe 2.5s ease-in-out infinite;
+}
+.dhs-orb__core {
+  inset: 32%;
+  background: radial-gradient(circle at 50% 38%, rgba(0, 225, 255, 0.3), rgba(10, 10, 18, 0.92) 72%);
+  box-shadow: inset 0 0 22px rgba(124, 95, 255, 0.45);
+}
