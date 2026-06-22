@@ -32,6 +32,7 @@ export interface RoomSubmission {
   videoUrl?: string;
   videoAnalysisStatus?: "pending" | "completed" | "failed";
   videoAnalysisError?: string;
+  autoSubmitted?: boolean;  // true when the 90s timer auto-submitted the prompt
 }
 
 export interface ReplayRequest {
@@ -168,7 +169,8 @@ export async function addRoomSubmission(
   difficulty: "easy" | "medium" | "hard",
   timestamp?: number,
   prompt?: string,
-  email?: string
+  email?: string,
+  autoSubmitted?: boolean
 ): Promise<RoomSubmission[]> {
   const name = playerName.trim() || "Anonymous";
   const ts = timestamp ?? Date.now();
@@ -185,6 +187,7 @@ export async function addRoomSubmission(
       timestamp: ts,
       ...(prompt ? { prompt } : {}),
       ...(email ? { email } : {}),
+      ...(autoSubmitted ? { autoSubmitted: true } : {}),
     });
     return rest;
   });

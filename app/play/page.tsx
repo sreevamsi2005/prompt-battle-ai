@@ -374,7 +374,7 @@ export default function PlayPage() {
   // Ensures we post to the global leaderboard only once per submission.
   const publishedGlobalRef = useRef(false);
   // Holds score + context needed by the polling effect (avoids stale-closure deps)
-  const pollCtxRef = useRef<{ score: ScoreResult; playerName: string; roomId: string | null; prompt: string; submissionTimestamp: number; challengeId: string; timeTakenToPrompt: number; email: string; videoTag: string; difficulty: "easy" | "medium" | "hard" } | null>(null);
+  const pollCtxRef = useRef<{ score: ScoreResult; playerName: string; roomId: string | null; prompt: string; submissionTimestamp: number; challengeId: string; timeTakenToPrompt: number; email: string; videoTag: string; difficulty: "easy" | "medium" | "hard"; autoSubmitted: boolean } | null>(null);
 
   // Load player name on mount
   useEffect(() => {
@@ -567,7 +567,7 @@ export default function PlayPage() {
 
     const finish = async (videoUrl: string | null) => {
       if (cancelled || !pollCtxRef.current) return;
-      const { score, playerName: name, roomId, prompt: p, submissionTimestamp, timeTakenToPrompt, email, challengeId, videoTag, difficulty } = pollCtxRef.current;
+      const { score, playerName: name, roomId, prompt: p, submissionTimestamp, timeTakenToPrompt, email, challengeId, videoTag, difficulty, autoSubmitted } = pollCtxRef.current;
       if (roomId) {
         try {
           await fetch("/api/leaderboard", {
@@ -585,6 +585,7 @@ export default function PlayPage() {
               challengeId,
               videoTag,
               difficulty,
+              autoSubmitted,
             }),
           });
         } catch {}
@@ -686,6 +687,8 @@ export default function PlayPage() {
         email: playerEmail.trim(),
         videoTag,
         difficulty: challenge?.difficulty ?? "medium",
+        // The timer's auto-submit sets this ref true before calling us.
+        autoSubmitted: autoSubmittedRef.current,
       };
 
       // Record the text-only result (room submission + global) and show results.
@@ -705,6 +708,7 @@ export default function PlayPage() {
                 challengeId: challenge?.challengeId ?? "",
                 videoTag,
                 difficulty: challenge?.difficulty ?? "medium",
+                autoSubmitted: autoSubmittedRef.current,
               }),
             });
           } catch {}

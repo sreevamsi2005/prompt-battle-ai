@@ -21,7 +21,7 @@ interface RoomAdminState {
   challengeDetails: ChallengeDetails | null;
   players: { playerName: string; lastSeen: number }[];
   submissionCount: number;
-  submissions: { playerName: string; score: number; timeTakenToPrompt: number; videoScore?: number; compositeScore?: number; timestamp: number; prompt?: string }[];
+  submissions: { playerName: string; score: number; timeTakenToPrompt: number; videoScore?: number; compositeScore?: number; timestamp: number; prompt?: string; autoSubmitted?: boolean }[];
   replayRequests: { roomId: string; playerName: string; timestamp: number }[];
 }
 
@@ -213,12 +213,12 @@ export default function AdminPage() {
     const submittedNames = new Set(submitted.map(s => s.playerName.toLowerCase()));
     const pending = (r.players ?? [])
       .filter(p => !submittedNames.has(p.playerName.toLowerCase()))
-      .map(p => ({ playerName: p.playerName, score: null as number | null, finalScore: null as number | null, timeTakenToPrompt: null as number | null, prompt: undefined as string | undefined, videoScore: undefined as number | undefined, compositeScore: undefined as number | undefined }));
+      .map(p => ({ playerName: p.playerName, score: null as number | null, finalScore: null as number | null, timeTakenToPrompt: null as number | null, prompt: undefined as string | undefined, videoScore: undefined as number | undefined, compositeScore: undefined as number | undefined, autoSubmitted: false }));
     const sorted = [...submitted].sort((a, b) =>
       finalOf(b) !== finalOf(a) ? finalOf(b) - finalOf(a) : a.timeTakenToPrompt - b.timeTakenToPrompt
     );
     return [
-      ...sorted.map(s => ({ playerName: s.playerName, score: s.score, finalScore: finalOf(s), timeTakenToPrompt: s.timeTakenToPrompt, prompt: s.prompt, videoScore: s.videoScore, compositeScore: s.compositeScore })),
+      ...sorted.map(s => ({ playerName: s.playerName, score: s.score, finalScore: finalOf(s), timeTakenToPrompt: s.timeTakenToPrompt, prompt: s.prompt, videoScore: s.videoScore, compositeScore: s.compositeScore, autoSubmitted: !!s.autoSubmitted })),
       ...pending,
     ];
   }
@@ -284,12 +284,20 @@ export default function AdminPage() {
                           </span>
                           {submitted ? (
                             <div className="flex-shrink-0 text-right">
-                              <p className={`text-sm font-bold font-mono leading-none ${idx === 0 ? "text-yellow-300" : ""}`}>{entry.finalScore} score</p>
-                              <p className="text-[10px] text-zinc-500 font-mono mt-0.5">{entry.score}% prompt</p>
+                              <p className={`text-sm font-bold font-mono leading-none ${idx === 0 ? "text-yellow-300" : ""}`}>
+                                {entry.finalScore} score{entry.autoSubmitted ? " ⏱" : ""}
+                              </p>
+                              <p className="text-[10px] text-zinc-500 font-mono mt-0.5">
+                                {entry.autoSubmitted ? "auto · time up" : "submitted"} · {entry.score}% prompt
+                              </p>
                             </div>
-                          ) : (
+                          ) : heroRoom.battleStartedAt && Date.now() - heroRoom.battleStartedAt < 90000 ? (
                             <span className="text-[10px] text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded px-1.5 py-0.5 font-mono animate-pulse flex-shrink-0">
                               Writing…
+                            </span>
+                          ) : (
+                            <span className="text-[10px] text-zinc-400 bg-zinc-600/10 border border-zinc-700/30 rounded px-1.5 py-0.5 font-mono flex-shrink-0">
+                              Waiting
                             </span>
                           )}
                         </div>

@@ -35,6 +35,7 @@ export async function POST(req: NextRequest) {
       difficulty,
       compositeScore,
       videoScore,
+      autoSubmitted,
     } = body as {
       playerName?: string;
       similarityScore?: number;
@@ -49,6 +50,7 @@ export async function POST(req: NextRequest) {
       difficulty?: "easy" | "medium" | "hard";
       compositeScore?: number;
       videoScore?: number;
+      autoSubmitted?: boolean;
     };
 
     if (!playerName?.trim() || similarityScore == null) {
@@ -74,7 +76,8 @@ export async function POST(req: NextRequest) {
         difficulty ?? "medium",
         timestamp,
         prompt,
-        email
+        email,
+        autoSubmitted
       );
 
       // Record to data sheet for every room submission
