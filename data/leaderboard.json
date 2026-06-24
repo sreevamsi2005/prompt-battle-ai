@@ -1,1 +1,10 @@
-[]
+[
+  {
+    "playerName": "Vamsi",
+    "similarityScore": 70,
+    "timeTakenToPrompt": 20,
+    "timestamp": 1782222836652,
+    "compositeScore": 85,
+    "videoScore": 100
+  }
+]

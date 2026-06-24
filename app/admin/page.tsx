@@ -287,11 +287,13 @@ export default function AdminPage() {
                               <p className={`text-sm font-bold font-mono leading-none ${idx === 0 ? "text-yellow-300" : ""}`}>
                                 {entry.finalScore} score{entry.autoSubmitted ? " ⏱" : ""}
                               </p>
-                              <p className="text-[10px] text-zinc-500 font-mono mt-0.5">
-                                {entry.autoSubmitted ? "auto · time up" : "submitted"} · {entry.score}% prompt
+                              <p className={`text-[10px] font-mono mt-0.5 ${entry.videoScore == null ? "text-[#0066FF] animate-pulse" : "text-zinc-500"}`}>
+                                {entry.videoScore == null
+                                  ? "submitted · analyzing video…"
+                                  : `${entry.autoSubmitted ? "auto · time up" : "submitted"} · ${entry.score}% prompt`}
                               </p>
                             </div>
-                          ) : heroRoom.battleStartedAt && Date.now() - heroRoom.battleStartedAt < 90000 ? (
+                          ) : heroRoom.battleStartedAt && Date.now() - heroRoom.battleStartedAt < 60000 ? (
                             <span className="text-[10px] text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded px-1.5 py-0.5 font-mono animate-pulse flex-shrink-0">
                               Writing…
                             </span>

@@ -67,8 +67,8 @@ Instead of separate numbers, results show:
 
 ## Multiplayer battle flow
 - Players who join sit on a **"Waiting for Players"** screen.
-- The battle starts (challenge video + 90s timer) **only when the room fills**, or
-  when the **admin force-starts** it. A shared start timestamp keeps the 90s
+- The battle starts (challenge video + 60s timer) **only when the room fills**, or
+  when the **admin force-starts** it. A shared start timestamp keeps the 60s
   countdown synchronized across all players.
 
 ---

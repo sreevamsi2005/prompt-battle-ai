@@ -427,9 +427,9 @@ export default function PlayPage() {
 
           // A "round" is one challenge + one battle start. When either changes,
           // it's a fresh round: reset state and route to waiting / playing.
-          // Treat a battle as live only within its 90s window — a stale timestamp
+          // Treat a battle as live only within its 60s window — a stale timestamp
           // from a previous round must not skip the waiting screen or show "time's up".
-          const started = data.battleStartedAt != null && Date.now() - data.battleStartedAt < 90_000;
+          const started = data.battleStartedAt != null && Date.now() - data.battleStartedAt < 60_000;
           const roundKey = `${data.activeChallengeId ?? ""}:${data.battleStartedAt ?? ""}`;
           if (roundKey !== roundKeyRef.current) {
             roundKeyRef.current = roundKey;
@@ -463,7 +463,7 @@ export default function PlayPage() {
     return () => clearInterval(t);
   }, [selectedRoomId, playerName, phase]);
 
-  // 90-second challenge timer. In multiplayer it counts from the shared
+  // 60-second challenge timer. In multiplayer it counts from the shared
   // battleStartedAt so every player's clock is synchronized; solo counts from now.
   useEffect(() => {
     if (phase === "playing" && challenge) {
@@ -471,7 +471,7 @@ export default function PlayPage() {
       challengeStartTimeRef.current = start;
       autoSubmittedRef.current = false;
       const tick = () => {
-        const remaining = Math.max(0, 90 - Math.floor((Date.now() - start) / 1000));
+        const remaining = Math.max(0, 60 - Math.floor((Date.now() - start) / 1000));
         setTimeLeft(remaining);
         return remaining;
       };
@@ -649,8 +649,8 @@ export default function PlayPage() {
 
       const submissionTimestamp = Date.now();
       const timeTakenToPrompt = challengeStartTimeRef.current
-        ? Math.min(90, Math.round((submissionTimestamp - challengeStartTimeRef.current) / 1000))
-        : 90;
+        ? Math.min(60, Math.round((submissionTimestamp - challengeStartTimeRef.current) / 1000))
+        : 60;
       const videoTag = challenge?.theme ?? "";
       pollCtxRef.current = {
         score: scoreData,

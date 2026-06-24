@@ -22,6 +22,9 @@ export async function clearLeaderboard(): Promise<void> {
   await blobSet("leaderboard", "entries", []);
 }
 
+// Upsert by player name: one entry per player (their latest result). This lets us
+// post a text-only score the moment they submit, then update it in place once the
+// video similarity is computed — without creating duplicate rows.
 export async function addEntry(
   playerName: string,
   similarityScore: number,
@@ -30,11 +33,13 @@ export async function addEntry(
   compositeScore?: number,
   videoScore?: number
 ): Promise<LeaderboardEntry[]> {
-  return blobUpdate<LeaderboardEntry[]>("leaderboard", "entries", [], (cur) =>
-    sortLeaderboard([
-      ...cur,
+  const name = playerName.trim() || "Booth Player";
+  return blobUpdate<LeaderboardEntry[]>("leaderboard", "entries", [], (cur) => {
+    const rest = cur.filter(e => e.playerName.toLowerCase() !== name.toLowerCase());
+    return sortLeaderboard([
+      ...rest,
       {
-        playerName: playerName.trim() || "Booth Player",
+        playerName: name,
         similarityScore,
         timeTakenToPrompt,
         timestamp: Date.now(),
@@ -42,6 +47,6 @@ export async function addEntry(
         ...(compositeScore != null ? { compositeScore } : {}),
         ...(videoScore != null ? { videoScore } : {}),
       },
-    ]).slice(0, 100)
-  );
+    ]).slice(0, 100);
+  });
 }
