@@ -25,7 +25,7 @@ export default function LeaderboardPage() {
   const [entries, setEntries] = useState<LeaderboardEntry[]>([]);
   const [playerName, setPlayerName] = useState<string | null>(null);
 
-  // Always show the global leaderboard.
+  // Always show the global leaderboard. Poll every 5s so scores update live.
   useEffect(() => {
     const load = async () => {
       try {
@@ -34,12 +34,13 @@ export default function LeaderboardPage() {
         setEntries(normalizeAndSort(data));
       } catch (err) {
         console.error("Failed to load leaderboard data:", err);
-        setEntries([]);
       }
     };
 
     load();
     setPlayerName(getPlayerName());
+    const t = setInterval(load, 5000);
+    return () => clearInterval(t);
   }, []);
 
   return (

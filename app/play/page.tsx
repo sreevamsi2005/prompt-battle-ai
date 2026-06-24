@@ -371,8 +371,6 @@ export default function PlayPage() {
   const recorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const voiceFinalRef = useRef<string>("");
-  // Ensures we post to the global leaderboard only once per submission.
-  const publishedGlobalRef = useRef(false);
   // Holds score + context needed by the polling effect (avoids stale-closure deps)
   const pollCtxRef = useRef<{ score: ScoreResult; playerName: string; roomId: string | null; prompt: string; submissionTimestamp: number; challengeId: string; timeTakenToPrompt: number; email: string; videoTag: string; difficulty: "easy" | "medium" | "hard"; autoSubmitted: boolean } | null>(null);
 
@@ -445,7 +443,6 @@ export default function PlayPage() {
             setVideoFeedback(null);
             setReplayRequested(false);
             setVideoGated(false);
-            publishedGlobalRef.current = false;
             // Battle started + challenge ready → play; otherwise wait for players.
             setPhase(started && data.challengeDetails ? "playing" : "waiting");
           }
@@ -537,10 +534,10 @@ export default function PlayPage() {
 
   // Publish the player's score to the GLOBAL leaderboard exactly once, using the
   // composite (text + video) score so the board reflects combined similarity.
-  // Called from the no-video path and once video similarity resolves.
+  // Posted at submit (text only) and again once video similarity resolves
+  // (composite). The global leaderboard upserts by player, so the second call
+  // updates the same entry in place rather than duplicating it.
   const publishGlobalScore = async (compositeScore: number, vScore: number | null) => {
-    if (publishedGlobalRef.current) return;
-    publishedGlobalRef.current = true;
     const ctx = pollCtxRef.current;
     const textScore = ctx?.score.score ?? result?.score ?? compositeScore;
     try {
@@ -567,29 +564,9 @@ export default function PlayPage() {
 
     const finish = async (videoUrl: string | null) => {
       if (cancelled || !pollCtxRef.current) return;
-      const { score, playerName: name, roomId, prompt: p, submissionTimestamp, timeTakenToPrompt, email, challengeId, videoTag, difficulty, autoSubmitted } = pollCtxRef.current;
-      if (roomId) {
-        try {
-          await fetch("/api/leaderboard", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              scope: "room",
-              playerName: name,
-              similarityScore: score.score,
-              timeTakenToPrompt,
-              roomId,
-              prompt: p,
-              timestamp: submissionTimestamp,
-              email,
-              challengeId,
-              videoTag,
-              difficulty,
-              autoSubmitted,
-            }),
-          });
-        } catch {}
-      }
+      const { score, prompt: p } = pollCtxRef.current;
+      // The room submission was already recorded at submit time; here we just show
+      // the result (video score arrives separately and enriches the records).
       if (videoUrl) setUserVideo({ videoUrl, promptUsed: p });
       setResult(score);
       setRequestId(null);
@@ -659,7 +636,6 @@ export default function PlayPage() {
     setError(null);
     setVideoGated(false);
     setVideoFeedback(null);
-    publishedGlobalRef.current = false;
 
     try {
       // Score the prompt first — needed to decide whether to spend a video generation.
@@ -691,37 +667,41 @@ export default function PlayPage() {
         autoSubmitted: autoSubmittedRef.current,
       };
 
-      // Record the text-only result (room submission + global) and show results.
-      const finishTextOnly = async () => {
-        if (selectedRoomId) {
-          try {
-            await fetch("/api/leaderboard", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                scope: "room",
-                playerName: name,
-                similarityScore: scoreData.score,
-                timeTakenToPrompt,
-                roomId: selectedRoomId,
-                email: playerEmail.trim(),
-                challengeId: challenge?.challengeId ?? "",
-                videoTag,
-                difficulty: challenge?.difficulty ?? "medium",
-                autoSubmitted: autoSubmittedRef.current,
-              }),
-            });
-          } catch {}
-        }
+      // Record the score IMMEDIATELY on submit (text only) so the admin standings
+      // show "submitted" right away. Awaited so the admin sees the status change
+      // on its next poll rather than after a multi-second delay.
+      if (selectedRoomId) {
+        await fetch("/api/leaderboard", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            scope: "room",
+            playerName: name,
+            similarityScore: scoreData.score,
+            timeTakenToPrompt,
+            roomId: selectedRoomId,
+            prompt: prompt.trim(),
+            timestamp: submissionTimestamp,
+            email: playerEmail.trim(),
+            challengeId: challenge?.challengeId ?? "",
+            videoTag,
+            difficulty: challenge?.difficulty ?? "medium",
+            autoSubmitted: autoSubmittedRef.current,
+          }),
+        }).catch(() => {});
+      }
+      publishGlobalScore(scoreData.score, null);
+
+      // Show the text-only result (used by the no-video paths).
+      const finishTextOnly = () => {
         setResult(scoreData);
         setPhase("results");
-        publishGlobalScore(scoreData.score, null);
       };
 
       // Solo practice: only generate a video for strong prompts (>70).
       if (!selectedRoomId && scoreData.score <= 70) {
         setVideoGated(true);
-        await finishTextOnly();
+        finishTextOnly();
         return;
       }
 
@@ -738,7 +718,7 @@ export default function PlayPage() {
         if (genData.error && !genData.skipped) {
           setError(formatApiError(genData, "Video generation unavailable."));
         }
-        await finishTextOnly();
+        finishTextOnly();
       } else {
         setRequestId(genData.requestId);
         setPhase("generating");
@@ -1377,6 +1357,65 @@ export default function PlayPage() {
                     Reach 70+ prompt similarity to unlock video generation. Try a sharper prompt!
                   </div>
                 )}
+                {/* Room standings — Olympic podium: 2nd left · 1st center (tallest) · 3rd right */}
+                {selectedRoomId && roomState && (
+                  <div className="graphite-card p-4">
+                    <h3 className="text-xs sm:text-sm font-bold text-white uppercase tracking-wider font-mono flex items-center justify-between border-b border-zinc-900 pb-2.5">
+                      <span>Room Standings</span>
+                      <span className="text-[10px] text-[#0066FF] font-mono font-semibold normal-case">Live Synced</span>
+                    </h3>
+                    {(roomState.submissions || []).length > 0 ? (() => {
+                      const subs = roomState.submissions.slice(0, 5);
+                      // Classic podium order: 2nd, 1st, 3rd, 4th, 5th
+                      const podium = subs.length >= 2 ? [subs[1], subs[0], ...subs.slice(2)] : subs;
+                      // Bar heights for podium positions [2nd, 1st, 3rd, 4th, 5th]
+                      const barHeights = [96, 132, 72, 56, 44];
+                      const MEDALS = ["🥇", "🥈", "🥉"];
+                      return (
+                        <div className="flex items-end justify-center gap-2 sm:gap-4 mt-6 mb-1 px-2">
+                          {podium.map((sub, podiumIdx) => {
+                            const rank = subs.indexOf(sub); // 0=1st, 1=2nd, 2=3rd…
+                            const final = sub.compositeScore ?? sub.score;
+                            const isMe = sub.playerName.toLowerCase() === playerName.toLowerCase();
+                            const isWinner = rank === 0;
+                            const barH = barHeights[podiumIdx] ?? 44;
+                            const medalLabel = MEDALS[rank] ?? `#${rank + 1}`;
+                            return (
+                              <div key={sub.playerName + podiumIdx} className="flex flex-col items-center justify-end flex-1 max-w-[110px]">
+                                <span className="text-xl leading-none mb-0.5">{medalLabel}</span>
+                                <span className={`text-[11px] font-mono font-bold truncate max-w-full text-center px-1 ${isMe ? "text-[#0066FF]" : isWinner ? "text-yellow-200" : "text-white"}`}>
+                                  {sub.playerName}{isMe ? " (you)" : ""}
+                                </span>
+                                <span className={`text-sm font-mono font-extrabold leading-tight ${isWinner ? "text-yellow-300" : "text-[#0066FF]"}`}>
+                                  {final}%
+                                </span>
+                                <motion.div
+                                  initial={{ height: 0 }}
+                                  animate={{ height: barH }}
+                                  transition={{ duration: 0.7, ease: "easeOut", delay: podiumIdx * 0.1 }}
+                                  className={`w-full mt-1.5 rounded-t-md border-t border-x flex items-start justify-center pt-1.5 ${
+                                    isWinner
+                                      ? "bg-yellow-500/15 border-yellow-500/40"
+                                      : isMe
+                                      ? "bg-[#0066FF]/25 border-[#0066FF]/50"
+                                      : "bg-zinc-800/70 border-zinc-700"
+                                  }`}
+                                >
+                                  <span className={`text-[10px] font-mono font-bold ${isWinner ? "text-yellow-500/70" : "text-zinc-400"}`}>
+                                    #{rank + 1}
+                                  </span>
+                                </motion.div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      );
+                    })() : (
+                      <div className="text-center py-8 text-xs sm:text-sm text-zinc-500 font-mono">No scores recorded yet.</div>
+                    )}
+                  </div>
+                )}
+
                 {/* Final score + evaluation details (one combined score, no separate numbers) */}
                 {(() => {
                   const finalScore = videoScore != null ? Math.round(result.score * 0.5 + videoScore * 0.5) : result.score;
@@ -1433,51 +1472,6 @@ export default function PlayPage() {
 
                 {/* Side-by-Side Dual Video */}
                 {userVideo && <DualVideo originalSrc={challenge.videoUrl} userSrc={userVideo.videoUrl} />}
-
-                {/* Room standings only — global board lives on /leaderboard */}
-                <div className="mt-2">
-
-                  {/* LOCAL LEADERBOARD */}
-                  <div className="graphite-card p-4">
-                    <h3 className="text-xs sm:text-sm font-bold text-white uppercase tracking-wider font-mono flex items-center justify-between border-b border-zinc-900 pb-2.5">
-                      <span>Room Standings ({roomState?.name || "Local"})</span>
-                      {selectedRoomId && (
-                        <span className="text-[10px] text-[#0066FF] font-mono font-semibold normal-case">
-                          Live Synced
-                        </span>
-                      )}
-                    </h3>
-                    
-                    <div className="mt-3 space-y-2 overflow-y-auto max-h-[200px] pr-1">
-                      {(roomState?.submissions || []).length > 0 ? (
-                        roomState?.submissions.map((sub, idx) => {
-                          const isMe = sub.playerName.toLowerCase() === playerName.toLowerCase();
-                          return (
-                            <div
-                              key={sub.playerName + idx}
-                              className={`flex items-center justify-between p-2.5 rounded text-xs sm:text-sm border ${
-                                isMe
-                                  ? "bg-[#0066FF]/15 border-[#0066FF]/35 text-white font-bold"
-                                  : "bg-black/40 border-zinc-900 text-zinc-300"
-                              }`}
-                            >
-                              <div className="flex items-center gap-2.5">
-                                <span className="w-5 text-center font-mono font-bold text-zinc-600">{idx + 1}</span>
-                                <span className="truncate max-w-[150px]">{sub.playerName}</span>
-                              </div>
-                              <span className="font-mono text-[#0066FF] font-bold">{sub.compositeScore ?? sub.score}%</span>
-                            </div>
-                          );
-                        })
-                      ) : (
-                        <div className="text-center py-8 text-xs sm:text-sm text-zinc-500 font-mono">
-                          No scores recorded for this room session yet.
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                </div>
 
                 {/* Final action bar */}
                 <div className="flex flex-wrap gap-3 border-t border-zinc-900 pt-4 mt-2">
