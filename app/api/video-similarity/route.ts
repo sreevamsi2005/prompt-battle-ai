@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getPromptById } from "@/lib/booth-prompts";
 import { extractFrames, scoreVideoSimilarity } from "@/lib/video-analysis";
-import { updateRoomSubmissionWithVideoScore } from "@/lib/rooms";
+import { updateRoomSubmissionWithVideoScore, markRoomSubmissionVideoUnavailable } from "@/lib/rooms";
 
 // Allow up to 60 s on Netlify (default is 10 s, which isn't enough for
 // frame extraction + vision scoring + blob update).
@@ -40,6 +40,7 @@ export async function POST(req: NextRequest) {
 
     const challenge = getPromptById(challengeId);
     if (!challenge) {
+      if (roomId) await markRoomSubmissionVideoUnavailable(roomId, playerName);
       return NextResponse.json({ error: "Challenge not found", compositeScore: textScore, videoScore: null }, { status: 200 });
     }
 
@@ -56,6 +57,7 @@ export async function POST(req: NextRequest) {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.error("[video-similarity] frame extraction failed:", message);
+      if (roomId) await markRoomSubmissionVideoUnavailable(roomId, playerName);
       return NextResponse.json({ error: message, stage: "frame_extraction", videoScore: null, compositeScore: textScore }, { status: 200 });
     }
 
@@ -66,6 +68,7 @@ export async function POST(req: NextRequest) {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.error("[video-similarity] vision scoring failed:", message);
+      if (roomId) await markRoomSubmissionVideoUnavailable(roomId, playerName);
       return NextResponse.json({ error: message, stage: "vision_scoring", videoScore: null, compositeScore: textScore }, { status: 200 });
     }
 

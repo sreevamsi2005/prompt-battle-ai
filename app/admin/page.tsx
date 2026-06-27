@@ -21,7 +21,7 @@ interface RoomAdminState {
   challengeDetails: ChallengeDetails | null;
   players: { playerName: string; lastSeen: number }[];
   submissionCount: number;
-  submissions: { playerName: string; score: number; timeTakenToPrompt: number; videoScore?: number; compositeScore?: number; timestamp: number; prompt?: string; autoSubmitted?: boolean }[];
+  submissions: { playerName: string; score: number; timeTakenToPrompt: number; videoScore?: number; compositeScore?: number; timestamp: number; prompt?: string; autoSubmitted?: boolean; videoAnalysisStatus?: "pending" | "completed" | "failed" }[];
   replayRequests: { roomId: string; playerName: string; timestamp: number }[];
 }
 
@@ -210,7 +210,19 @@ export default function AdminPage() {
 
   function buildRoundRankings(r: RoomAdminState) {
     const submitted = r.submissions ?? [];
-    const finalOf = (s: { compositeScore?: number; score: number }) => s.compositeScore ?? null;
+    // The final score is shown ONLY once video analysis resolves — composite
+    // (text*0.3 + video*0.7) on success, or the text score if video is
+    // unavailable. While analysis is pending it stays null so the admin shows
+    // "scoring…" instead of the bare text score. A time-based safety net falls
+    // back to the text score if a video never resolves (e.g. generation failed
+    // or the player closed their tab) so a row never hangs on "scoring…".
+    const ANALYSIS_TIMEOUT_MS = 180_000;
+    const finalOf = (s: { compositeScore?: number; score: number; timestamp: number; videoAnalysisStatus?: string }) => {
+      if (s.compositeScore != null) return s.compositeScore;
+      if (s.videoAnalysisStatus === "failed") return s.score;
+      if (Date.now() - s.timestamp > ANALYSIS_TIMEOUT_MS) return s.score;
+      return null;
+    };
     const submittedNames = new Set(submitted.map(s => s.playerName.toLowerCase()));
     const pending = (r.players ?? [])
       .filter(p => !submittedNames.has(p.playerName.toLowerCase()))
@@ -293,8 +305,8 @@ export default function AdminPage() {
                               <p className={`text-sm font-bold font-mono leading-none ${idx === 0 && entry.finalScore != null ? "text-yellow-300" : ""}`}>
                                 {entry.finalScore != null ? `${entry.finalScore} score` : "scoring..."}{entry.autoSubmitted ? " ⏱" : ""}
                               </p>
-                              <p className={`text-[10px] font-mono mt-0.5 ${entry.videoScore == null ? "text-[#0066FF] animate-pulse" : "text-zinc-500"}`}>
-                                {entry.videoScore == null
+                              <p className={`text-[10px] font-mono mt-0.5 ${entry.finalScore == null ? "text-[#0066FF] animate-pulse" : "text-zinc-500"}`}>
+                                {entry.finalScore == null
                                   ? "submitted · analyzing video…"
                                   : `${entry.autoSubmitted ? "auto · time up" : "submitted"} · ${entry.score}% prompt`}
                               </p>

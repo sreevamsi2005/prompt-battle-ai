@@ -200,11 +200,13 @@ export async function addRoomSubmission(
       roomId,
       playerName: name,
       score,
-      // Final score starts as the text score; updated to text+video when analyzed.
-      compositeScore: score,
+      // No final score yet — it stays undefined until the video is analyzed, so
+      // the admin shows "scoring…" rather than the text score prematurely. The
+      // composite (text*0.3 + video*0.7) is written once video analysis resolves.
       timeTakenToPrompt,
       difficulty,
       timestamp: ts,
+      videoAnalysisStatus: "pending",
       ...(prompt ? { prompt } : {}),
       ...(email ? { email } : {}),
       ...(autoSubmitted ? { autoSubmitted: true } : {}),
@@ -240,6 +242,27 @@ export async function updateRoomSubmissionWithVideoScore(
     return current;
   });
   return updated.find(s => s.roomId === roomId && s.playerName.toLowerCase() === name.toLowerCase()) || null;
+}
+
+// Finalize a submission as text-only when no video score can be produced (video
+// generation failed, frame extraction/vision scoring errored, etc.). The prompt
+// score becomes the final score so the admin stops showing "scoring…". Never
+// overrides a submission that already completed video analysis.
+export async function markRoomSubmissionVideoUnavailable(
+  roomId: string,
+  playerName: string
+): Promise<void> {
+  const name = playerName.trim();
+  await blobUpdate<RoomSubmission[]>("rooms", "submissions", [], (current) => {
+    const submission = current.find(
+      s => s.roomId === roomId && s.playerName.toLowerCase() === name.toLowerCase()
+    );
+    if (submission && submission.videoAnalysisStatus !== "completed") {
+      submission.compositeScore = submission.score;
+      submission.videoAnalysisStatus = "failed";
+    }
+    return current;
+  });
 }
 
 /* ── Replay / "next challenge" requests raised by players ───────────────── */
