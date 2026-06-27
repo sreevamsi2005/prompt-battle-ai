@@ -105,8 +105,8 @@ export default function HomePage() {
   return (
     <div className="relative h-[calc(100vh-3.5rem)] flex flex-col justify-between overflow-hidden">
       {/* Immersive background layout overlay */}
-      <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-        <div className="h-[500px] w-[700px] rounded-full bg-[#0066FF]/10 blur-[150px]" />
+      <div className="pointer-events-none absolute inset-0 flex items-center justify-center opacity-20">
+        <img src="/new gif log.gif" alt="Background Logo" className="h-[400px] w-auto mix-blend-screen" />
       </div>
 
       {/* Main hero segment */}
