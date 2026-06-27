@@ -136,6 +136,7 @@ export default function AdminPage() {
   };
 
   const handleRoomAction = async (roomId: string, action: string, extra?: Record<string, unknown>) => {
+    if (action === "reset-session" && !confirm("Send every connected device back to the join screen? Scores are kept — the leaderboard is not cleared.")) return;
     if (action === "reset-scores" && !confirm("Clear all scores for this room?")) return;
     try {
       const res = await fetch(`/api/admin/rooms?id=${roomId}`, {
@@ -382,10 +383,10 @@ export default function AdminPage() {
                     🎲 Random
                   </button>
                   <button
-                    onClick={() => handleRoomAction(heroRoom.id, "reset-scores")}
+                    onClick={() => handleRoomAction(heroRoom.id, "reset-session")}
                     className="flex-1 text-[10px] uppercase font-bold font-mono text-zinc-300 bg-zinc-900 border border-zinc-800 hover:border-rose-500/50 hover:text-rose-300 rounded px-2 py-1.5 transition"
                   >
-                    Reset Scores
+                    Reset Session
                   </button>
                 </div>
               </div>
@@ -488,10 +489,10 @@ export default function AdminPage() {
                 <label className="block text-xs font-bold uppercase text-zinc-500 font-mono mb-2">Actions</label>
                 <div className="space-y-2">
                   <button
-                    onClick={() => handleRoomAction(room.id, "reset-scores")}
+                    onClick={() => handleRoomAction(room.id, "reset-session")}
                     className="w-full text-xs font-bold font-mono text-zinc-300 bg-zinc-900 border border-zinc-800 hover:border-rose-500/50 hover:text-rose-300 rounded px-4 py-1.5 transition"
                   >
-                    Reset Scores
+                    Reset Session
                   </button>
                   <button
                     onClick={handleResetLeaderboard}

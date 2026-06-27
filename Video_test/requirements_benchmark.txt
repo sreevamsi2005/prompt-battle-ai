@@ -1,0 +1,27 @@
+# Video Similarity Benchmark — Python dependencies
+# Install with: pip install -r requirements_benchmark.txt
+
+# Core (always needed)
+opencv-python>=4.8.0
+numpy>=1.24.0
+pandas>=2.0.0
+tqdm>=4.65.0
+
+# T1 — GPT Vision  (set OPENAI_API_KEY env var)
+openai>=1.0.0
+
+# T2 — Gemini 2.5 Flash  (GEMINI_API_KEY is pre-set in the script)
+google-generativeai>=0.8.0
+
+# T3 — CLIP Embeddings  (downloads ~600 MB model on first run)
+torch>=2.0.0
+torchvision>=0.15.0
+transformers>=4.35.0
+Pillow>=10.0.0
+
+# T4 — Perceptual Hash
+imagehash>=4.3.0
+Pillow>=10.0.0
+
+# T5 — CV Multi-metric SSIM
+scikit-image>=0.22.0

@@ -1,0 +1,55 @@
+======================================================================
+  VIDEO SIMILARITY BENCHMARK RESULTS
+  Reference : Original.mp4   |   Test set : w1-w8.mp4   |   Frames : 6
+======================================================================
+
+TECHNIQUE LEGEND
+  T1 - GPT Vision           model=OpenAI gpt-4o-mini                frame-level vision LLM judge (existing prod)
+  T2 - Gemini 2.5 Flash     model=google/gemini-2.5-flash           full-video multimodal scoring via Files API
+  T3 - CLIP Embeddings      model=open_clip ViT-B-32 / ResNet-50    cosine sim of visual frame embeddings (no API cost)
+  T4 - Perceptual Hash      model=pHash (no model)                  DCT-based perceptual hash Hamming distance
+  T5 - CV Multi-metric      model=OpenCV (no model)                 color hist 30% + SSIM 35% + temporal 20% + edge 15%
+
+----------------------------------------------------------------------
+SUMMARY STATISTICS
+----------------------------------------------------------------------
+  Technique                  Min   Max   Mean    Std  AvgTime(s)
+  T1 - GPT Vision           50.0  80.0   65.0   10.7       2.885
+  T2 - Gemini 2.5 Flash     45.0  65.0   58.1    7.1      21.545
+  T3 - CLIP Embeddings      86.0  93.0   89.9    2.4       0.777
+  T4 - Perceptual Hash      57.0  63.0   59.5    1.9       0.015
+  T5 - CV Multi-metric      43.0  55.0   48.1    3.7       0.080
+
+----------------------------------------------------------------------
+SPEED RANKING (fastest to slowest, avg per video)
+----------------------------------------------------------------------
+  #1  T4 - Perceptual Hash      0.015s avg
+  #2  T5 - CV Multi-metric      0.080s avg
+  #3  T3 - CLIP Embeddings      0.777s avg
+  #4  T1 - GPT Vision           2.885s avg
+  #5  T2 - Gemini 2.5 Flash     21.545s avg
+
+----------------------------------------------------------------------
+ACCURACY PROXY - top-3 agreement with consensus
+----------------------------------------------------------------------
+  Consensus top-3 : w1, w4, w5
+  T1 - GPT Vision           top-3 overlap=3/3  ['w1', 'w4', 'w5']
+  T2 - Gemini 2.5 Flash     top-3 overlap=2/3  ['w1', 'w5', 'w8']
+  T3 - CLIP Embeddings      top-3 overlap=3/3  ['w1', 'w4', 'w5']
+  T4 - Perceptual Hash      top-3 overlap=1/3  ['w2', 'w4', 'w8']
+  T5 - CV Multi-metric      top-3 overlap=3/3  ['w1', 'w4', 'w5']
+
+----------------------------------------------------------------------
+PER-VIDEO BREAKDOWN
+----------------------------------------------------------------------
+  Video      GPT  Gemini   CLIP  pHash    CV  Consensus  Rank
+  ------------------------------------------------------------
+  w1          80      65     93     57    51       69.2    #1
+  w5          70      65     92     59    49         67    #2
+  w4          70      55     91     61    55       66.4    #3
+  w8          70      62     88     63    48       66.2    #4
+  w3          70      55     91     58    48       64.4    #5
+  w7          60       -     86     59    46       62.8    #6
+  w2          50      60     90     60    43       60.6    #7
+  w6          50      45     88     59    45       57.4    #8
+

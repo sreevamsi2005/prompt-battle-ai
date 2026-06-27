@@ -8,7 +8,8 @@ import {
   loadRoomSubmissions,
   loadReplayRequests,
   clearReplayRequests,
-  clearRoomSubmissions
+  clearRoomSubmissions,
+  resetRoom
 } from "@/lib/rooms";
 import { getPromptById, getRandomPrompt } from "@/lib/booth-prompts";
 
@@ -74,7 +75,7 @@ export async function PUT(req: NextRequest) {
 }
 
 // PATCH /api/admin/rooms?id=ROOM — operational actions on a room.
-// body: { action: "reset-scores" | "clear-requests" | "assign-random" | "update-max-users", maxUsers?: number }
+// body: { action: "reset-session" | "reset-scores" | "clear-requests" | "assign-random" | "update-max-users", maxUsers?: number }
 export async function PATCH(req: NextRequest) {
   if (!checkAuth(req)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   try {
@@ -83,7 +84,13 @@ export async function PATCH(req: NextRequest) {
     const body = (await req.json()) as { action?: string; maxUsers?: number };
     const { action } = body;
 
-    if (action === "reset-scores") {
+    if (action === "reset-session") {
+      // Page-only reset: clear the challenge/battle/players and bump resetAt so
+      // every connected device returns to the /play lobby. Scores are NOT
+      // touched — any player who already played stays on the leaderboard.
+      await clearReplayRequests(id);
+      await resetRoom(id);
+    } else if (action === "reset-scores") {
       await clearRoomSubmissions(id);
       await clearReplayRequests(id);
     } else if (action === "clear-requests") {

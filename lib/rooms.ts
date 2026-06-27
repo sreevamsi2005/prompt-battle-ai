@@ -16,6 +16,10 @@ export interface Room {
   // timestamp when the battle starts (auto when full, or admin force-start).
   // The shared timestamp also synchronizes the countdown across all players.
   battleStartedAt: number | null;
+  // Bumped to Date.now() when the admin resets the session. Connected /play
+  // clients compare it against the value they saw when joining and, when it
+  // increases, return to the lobby (general /play join screen).
+  resetAt?: number | null;
 }
 
 export interface RoomSubmission {
@@ -111,6 +115,22 @@ export async function startBattle(roomId: string): Promise<Room | undefined> {
   const room = rooms.find(r => r.id === roomId);
   if (room && room.activeChallengeId && room.battleStartedAt == null) {
     room.battleStartedAt = Date.now();
+    await saveRooms(rooms);
+  }
+  return room;
+}
+
+// Full session reset: clear the challenge, battle, and player list, and bump
+// resetAt so every connected client returns to the /play lobby on its next
+// heartbeat. Scores/replay requests are cleared separately by the caller.
+export async function resetRoom(roomId: string): Promise<Room | undefined> {
+  const rooms = await loadRooms();
+  const room = rooms.find(r => r.id === roomId);
+  if (room) {
+    room.activeChallengeId = null;
+    room.battleStartedAt = null;
+    room.players = [];
+    room.resetAt = Date.now();
     await saveRooms(rooms);
   }
   return room;

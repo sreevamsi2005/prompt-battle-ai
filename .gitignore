@@ -53,3 +53,10 @@ next-env.d.ts
 # local agent / editor state
 /.claude/
 
+# video-similarity benchmark — keep scripts/results, exclude large sample clips
+/Video_test/*.mp4
+/Video_test/__pycache__/
+
+# redundant root copy of the waiting-screen logo (the app serves /public/logo_compressed.gif)
+/logo_compressed.gif
+

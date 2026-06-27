@@ -46,6 +46,7 @@ interface RoomState {
   maxUsers: number;
   activeChallengeId: string | null;
   battleStartedAt: number | null;
+  resetAt: number | null;
   challengeDetails: Challenge | null;
   players: RoomPlayerStatus[];
   submissions: { playerName: string; score: number; videoScore?: number; compositeScore?: number; timeTakenToPrompt: number; timestamp: number }[];
@@ -341,6 +342,9 @@ export default function PlayPage() {
   const [userVideo, setUserVideo] = useState<UserVideo | null>(null);
   const [result, setResult] = useState<ScoreResult | null>(null);
   const [videoScore, setVideoScore] = useState<number | null>(null);
+  // True while the video-similarity score is being computed in the background
+  // (results screen is already showing the generated video, score area loads).
+  const [scoring, setScoring] = useState(false);
   // True when a solo submission scored ≤70 so no video was generated.
   const [videoGated, setVideoGated] = useState(false);
 
@@ -352,7 +356,6 @@ export default function PlayPage() {
   const [requestId, setRequestId] = useState<string | null>(null);
   // One-line qualitative feedback from the video-similarity model.
   const [videoFeedback, setVideoFeedback] = useState<string | null>(null);
-  const [replayRequested, setReplayRequested] = useState(false);
   const [goingGlobal, setGoingGlobal] = useState(false);
   const [timeLeft, setTimeLeft] = useState<number | null>(null);
 
@@ -364,6 +367,10 @@ export default function PlayPage() {
   const activeChallengeIdRef = useRef<string | null>(null);
   // Identifies the current round (challengeId + battleStartedAt) to detect new rounds.
   const roundKeyRef = useRef<string>("");
+  // resetAt value seen when joining; if the room's resetAt later increases, the
+  // admin reset the session and this device returns to the lobby. undefined =
+  // not yet baselined (set on the first heartbeat after joining).
+  const resetBaselineRef = useRef<number | null | undefined>(undefined);
   const challengeStartTimeRef = useRef<number | null>(null);
   // Guards the timer's auto-submit so it fires at most once per challenge.
   const autoSubmittedRef = useRef(false);
@@ -417,6 +424,30 @@ export default function PlayPage() {
         
         if (res.ok) {
           const data = (await res.json()) as RoomState;
+
+          // Admin session reset → return this device to the general /play lobby.
+          // The first beat after joining records the baseline; a later increase
+          // means a reset happened while we were connected.
+          const rAt = data.resetAt ?? null;
+          if (resetBaselineRef.current === undefined) {
+            resetBaselineRef.current = rAt;
+          } else if (rAt != null && (resetBaselineRef.current === null || rAt > resetBaselineRef.current)) {
+            resetBaselineRef.current = rAt;
+            roundKeyRef.current = "";
+            setSelectedRoomId(null);
+            setChallenge(null);
+            setPrompt("");
+            setUserVideo(null);
+            setResult(null);
+            setVideoScore(null);
+            setScoring(false);
+            setVideoFeedback(null);
+            setVideoGated(false);
+            setRoomState(null);
+            setPhase("lobby");
+            return;
+          }
+
           setRoomState(data);
           setBattleStartedAt(data.battleStartedAt ?? null);
 
@@ -440,8 +471,8 @@ export default function PlayPage() {
             setUserVideo(null);
             setResult(null);
             setVideoScore(null);
+            setScoring(false);
             setVideoFeedback(null);
-            setReplayRequested(false);
             setVideoGated(false);
             // Battle started + challenge ready → play; otherwise wait for players.
             setPhase(started && data.challengeDetails ? "playing" : "waiting");
@@ -507,6 +538,7 @@ export default function PlayPage() {
     setUserVideo(null);
     setResult(null);
     setVideoScore(null);
+    setScoring(false);
     setVideoFeedback(null);
     setError(null);
     setSelectedRoomId(null);
@@ -557,63 +589,48 @@ export default function PlayPage() {
     } catch {}
   };
 
-  // Poll for video result while in "generating" phase
+  // Poll for the generated video while in "generating" phase. Once the video is
+  // ready we go STRAIGHT to results so the player can watch their output. The
+  // similarity score is then computed in the background (see the scoring effect
+  // below) and revealed once ready — the score area shows a loading effect
+  // meanwhile, so the first number shown is always the final composite (never a
+  // text score that gets overwritten).
   useEffect(() => {
     if (phase !== "generating" || !requestId) return;
     let cancelled = false;
-
-    const finish = async (videoUrl: string | null) => {
-      if (cancelled || !pollCtxRef.current) return;
-      const { score, prompt: p } = pollCtxRef.current;
-      // The room submission was already recorded at submit time; here we just show
-      // the result (video score arrives separately and enriches the records).
-      if (videoUrl) setUserVideo({ videoUrl, promptUsed: p });
-      setResult(score);
-      setRequestId(null);
-      setPhase("results");
-    };
+    // Guards against the 3s interval firing twice once we've handled a result.
+    let finalizing = false;
 
     const poll = async () => {
-      if (cancelled) return;
+      if (cancelled || finalizing) return;
       try {
         const res = await fetch(`/api/generate-poll?requestId=${requestId}`);
         const data = await res.json();
+        const ctx = pollCtxRef.current;
+        if (cancelled || !ctx) return;
+
         if (data.status === "COMPLETED") {
-          await finish(data.videoUrl);
-          // Trigger video similarity from client (avoids server-to-server port issues)
-          const ctx = pollCtxRef.current;
-          if (data.videoUrl && ctx?.challengeId) {
-            fetch("/api/video-similarity", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                challengeId: ctx.challengeId,
-                userVideoUrl: data.videoUrl,
-                textScore: ctx.score.score,
-                roomId: ctx.roomId ?? "",
-                playerName: ctx.playerName,
-                submissionTimestamp: ctx.submissionTimestamp,
-              }),
-            })
-            .then(r => r.json())
-            .then(vsResult => {
-              if (vsResult.feedback) setVideoFeedback(vsResult.feedback);
-              if (vsResult.videoScore != null) {
-                setVideoScore(vsResult.videoScore);
-                const composite = vsResult.compositeScore ?? Math.round(ctx.score.score * 0.5 + vsResult.videoScore * 0.5);
-                publishGlobalScore(composite, vsResult.videoScore);
-              } else {
-                publishGlobalScore(ctx.score.score, null);
-              }
-            })
-            .catch(() => { publishGlobalScore(ctx.score.score, null); });
+          finalizing = true;
+          setResult(ctx.score);
+          if (data.videoUrl) {
+            // Show the video immediately and kick off background scoring.
+            setUserVideo({ videoUrl: data.videoUrl, promptUsed: ctx.prompt });
+            setScoring(true);
           } else {
-            publishGlobalScore(ctx?.score.score ?? 0, null);
+            // No video produced — the prompt score is the final score.
+            publishGlobalScore(ctx.score.score, null);
+            setScoring(false);
           }
+          setRequestId(null);
+          setPhase("results");
         } else if (data.status === "FAILED" || data.error) {
+          finalizing = true;
           setError(formatApiError(data, "Video generation failed."));
-          await finish(null);
-          publishGlobalScore(pollCtxRef.current?.score.score ?? 0, null);
+          publishGlobalScore(ctx.score.score, null);
+          setResult(ctx.score);
+          setScoring(false);
+          setRequestId(null);
+          setPhase("results");
         }
         // IN_QUEUE / IN_PROGRESS → keep polling
       } catch {}
@@ -624,6 +641,51 @@ export default function PlayPage() {
     return () => { cancelled = true; clearInterval(t); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [requestId, phase]);
+
+  // Background video-similarity scoring. Runs once we're on the results screen
+  // with a generated video. Independent of the polling effect so it survives the
+  // phase change. Publishes the final composite to the leaderboard exactly once.
+  useEffect(() => {
+    if (phase !== "results" || !scoring || !userVideo || videoScore != null) return;
+    const ctx = pollCtxRef.current;
+    if (!ctx?.challengeId) { setScoring(false); return; }
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const vs = await fetch("/api/video-similarity", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            challengeId: ctx.challengeId,
+            userVideoUrl: userVideo.videoUrl,
+            textScore: ctx.score.score,
+            roomId: ctx.roomId ?? "",
+            playerName: ctx.playerName,
+            submissionTimestamp: ctx.submissionTimestamp,
+          }),
+        }).then(r => r.json());
+        if (cancelled) return;
+
+        if (vs.videoScore != null) {
+          const composite = vs.compositeScore ?? Math.round(ctx.score.score * 0.5 + vs.videoScore * 0.5);
+          if (vs.feedback) setVideoFeedback(vs.feedback);
+          setVideoScore(vs.videoScore);
+          publishGlobalScore(composite, vs.videoScore);
+        } else {
+          // Similarity unavailable — final score is the prompt score.
+          publishGlobalScore(ctx.score.score, null);
+        }
+      } catch {
+        if (!cancelled) publishGlobalScore(ctx.score.score, null);
+      } finally {
+        if (!cancelled) setScoring(false);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, scoring, userVideo]);
 
   // Submit Prompt — score first, then generate a video. In solo practice the
   // video is only generated when the prompt similarity is strong (>70).
@@ -690,10 +752,11 @@ export default function PlayPage() {
           }),
         }).catch(() => {});
       }
-      publishGlobalScore(scoreData.score, null);
 
-      // Show the text-only result (used by the no-video paths).
+      // Show the result for paths where no video is produced. Here the prompt
+      // score IS the final score, so we publish it once (no later overwrite).
       const finishTextOnly = () => {
+        publishGlobalScore(scoreData.score, null);
         setResult(scoreData);
         setPhase("results");
       };
@@ -784,21 +847,6 @@ export default function PlayPage() {
     if (recorderRef.current?.state === "recording") recorderRef.current.stop();
   };
 
-  // Ask the admin (booth operator) to start the next challenge for this room.
-  const requestNextChallenge = async () => {
-    if (!selectedRoomId || replayRequested) return;
-    setReplayRequested(true);
-    try {
-      await fetch("/api/rooms/replay-request", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ roomId: selectedRoomId, playerName: playerName.trim() || "Anonymous Player" }),
-      });
-    } catch {
-      setReplayRequested(false);
-    }
-  };
-
   const goToGlobalLeaderboard = () => {
     if (goingGlobal) return;
     setGoingGlobal(true);
@@ -824,6 +872,9 @@ export default function PlayPage() {
     setPlayerName(name);
     setPlayerNameState(name);
     setPlayerEmail(mpEmail.trim());
+    // Re-baseline reset detection so we only react to resets after this join.
+    resetBaselineRef.current = undefined;
+    roundKeyRef.current = "";
     setSelectedRoomId(room.id);
     setPhase("loading");
   };
@@ -1102,12 +1153,13 @@ export default function PlayPage() {
                   className="flex flex-col items-center justify-center flex-1 py-12 px-4 my-auto"
                 >
                   <div className="graphite-card p-8 w-full max-w-md text-center">
-                    {/* DataHack Summit spinning orb (logo only) */}
-                    <div className="dhs-orb mx-auto h-28 w-28 mb-3">
-                      <span className="dhs-orb__ring" />
-                      <span className="dhs-orb__ring dhs-orb__ring--inner" />
-                      <span className="dhs-orb__core" />
-                    </div>
+                    {/* Centered animated logo (standalone — nothing overlaid) */}
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src="/logo_compressed.gif"
+                      alt="DataHack Summit"
+                      className="mx-auto h-32 w-32 object-contain mb-4"
+                    />
 
                     {/* Summit branding */}
                     <p className="text-[10px] uppercase tracking-[0.2em] font-mono font-bold mb-4">
@@ -1418,29 +1470,69 @@ export default function PlayPage() {
 
                 {/* Final score + evaluation details (one combined score, no separate numbers) */}
                 {(() => {
+                  // While the video score is still computing, show a loading ring
+                  // instead of a number so the first value shown is the final score.
+                  const scoringNow = scoring && videoScore == null;
                   const finalScore = videoScore != null ? Math.round(result.score * 0.5 + videoScore * 0.5) : result.score;
                   return (
                     <div className="graphite-card p-5">
                       <div className="flex flex-col sm:flex-row items-center gap-5">
-                        {/* Big final-score ring */}
+                        {/* Big final-score ring — spinner while scoring, value once ready */}
                         <div className="relative flex-shrink-0 h-28 w-28 flex items-center justify-center">
-                          <svg className="h-28 w-28 -rotate-90" viewBox="0 0 36 36">
-                            <circle cx="18" cy="18" r="16" fill="none" stroke="#27272a" strokeWidth="2.5" />
-                            <motion.circle cx="18" cy="18" r="16" fill="none" stroke="#0066FF" strokeWidth="2.5" strokeLinecap="round" initial={{ strokeDasharray: "0 100" }} animate={{ strokeDasharray: `${finalScore} 100` }} transition={{ duration: 1.2, ease: "easeOut" }} />
-                          </svg>
-                          <div className="absolute flex flex-col items-center">
-                            <span className="text-3xl font-extrabold text-white font-mono leading-none">{finalScore}</span>
-                            <span className="text-[9px] uppercase tracking-wider text-[#0066FF] font-mono mt-1">Final Score</span>
-                          </div>
+                          {scoringNow ? (
+                            <>
+                              <motion.svg
+                                className="h-28 w-28"
+                                viewBox="0 0 36 36"
+                                animate={{ rotate: 360 }}
+                                transition={{ duration: 1.1, repeat: Infinity, ease: "linear" }}
+                              >
+                                <circle cx="18" cy="18" r="16" fill="none" stroke="#27272a" strokeWidth="2.5" />
+                                <circle cx="18" cy="18" r="16" fill="none" stroke="#0066FF" strokeWidth="2.5" strokeLinecap="round" strokeDasharray="22 100" />
+                              </motion.svg>
+                              <div className="absolute flex flex-col items-center">
+                                <span className="text-[11px] uppercase tracking-wider text-[#0066FF] font-mono font-bold">Scoring</span>
+                                <motion.span
+                                  className="text-[9px] text-zinc-500 font-mono mt-0.5"
+                                  animate={{ opacity: [0.3, 1, 0.3] }}
+                                  transition={{ duration: 1.4, repeat: Infinity }}
+                                >
+                                  analyzing…
+                                </motion.span>
+                              </div>
+                            </>
+                          ) : (
+                            <>
+                              <svg className="h-28 w-28 -rotate-90" viewBox="0 0 36 36">
+                                <circle cx="18" cy="18" r="16" fill="none" stroke="#27272a" strokeWidth="2.5" />
+                                <motion.circle cx="18" cy="18" r="16" fill="none" stroke="#0066FF" strokeWidth="2.5" strokeLinecap="round" initial={{ strokeDasharray: "0 100" }} animate={{ strokeDasharray: `${finalScore} 100` }} transition={{ duration: 1.2, ease: "easeOut" }} />
+                              </svg>
+                              <div className="absolute flex flex-col items-center">
+                                <motion.span
+                                  initial={{ scale: 0.6, opacity: 0 }}
+                                  animate={{ scale: 1, opacity: 1 }}
+                                  transition={{ type: "spring", stiffness: 260, damping: 18 }}
+                                  className="text-3xl font-extrabold text-white font-mono leading-none"
+                                >
+                                  {finalScore}
+                                </motion.span>
+                                <span className="text-[9px] uppercase tracking-wider text-[#0066FF] font-mono mt-1">Final Score</span>
+                              </div>
+                            </>
+                          )}
                         </div>
                         {/* Headline remark */}
                         <div className="flex-1 text-center sm:text-left">
-                          <p className="text-base sm:text-lg font-bold text-white leading-snug">{evaluationRemark(finalScore)}</p>
+                          <p className="text-base sm:text-lg font-bold text-white leading-snug">
+                            {scoringNow ? "Comparing your video to the reference…" : evaluationRemark(finalScore)}
+                          </p>
                           <p className="mt-1.5 text-xs text-zinc-500 font-mono">
-                            {videoScore != null
+                            {scoringNow
+                              ? "Your final score is being calculated"
+                              : videoScore != null
                               ? "Based on combined prompt + video similarity"
                               : userVideo
-                              ? "Calculating video similarity…"
+                              ? "Based on prompt similarity (video comparison unavailable)"
                               : "Based on prompt similarity"}
                           </p>
                         </div>
@@ -1456,7 +1548,9 @@ export default function PlayPage() {
                         <div className="flex gap-3 border-t border-zinc-900 pt-3">
                           <span className="mt-0.5 text-[10px] font-bold font-mono text-[#8b5cf6] uppercase w-12 flex-shrink-0">Video</span>
                           <p className="flex-1 text-xs text-zinc-300 leading-relaxed">
-                            {videoFeedback ?? (userVideo ? "Analyzing your video against the reference…" : "No video was generated for this attempt.")}
+                            {scoringNow
+                              ? "Analyzing your video against the reference…"
+                              : videoFeedback ?? (userVideo ? "Video comparison unavailable for this attempt." : "No video was generated for this attempt.")}
                           </p>
                         </div>
                       </div>
@@ -1473,40 +1567,14 @@ export default function PlayPage() {
                 {/* Side-by-Side Dual Video */}
                 {userVideo && <DualVideo originalSrc={challenge.videoUrl} userSrc={userVideo.videoUrl} />}
 
-                {/* Final action bar */}
-                <div className="flex flex-wrap gap-3 border-t border-zinc-900 pt-4 mt-2">
-                  {selectedRoomId ? (
-                    <button
-                      onClick={requestNextChallenge}
-                      disabled={replayRequested}
-                      className="btn-secondary flex-1 min-w-[200px] py-3 text-sm font-bold disabled:opacity-60"
-                    >
-                      {replayRequested ? "Request Sent ✓ — Waiting for Admin" : "Request Next Challenge"}
-                    </button>
-                  ) : (
-                    <button
-                      onClick={loadSoloChallenge}
-                      className="btn-secondary flex-1 min-w-[200px] py-3 text-sm font-bold"
-                    >
-                      Play Next Challenge
-                    </button>
-                  )}
+                {/* Final action bar — only the leaderboard button remains */}
+                <div className="flex border-t border-zinc-900 pt-4 mt-2">
                   <button
                     onClick={goToGlobalLeaderboard}
                     disabled={goingGlobal}
-                    className="btn-primary flex-1 min-w-[200px] py-3 text-sm font-bold"
+                    className="btn-primary flex-1 py-3 text-sm font-bold"
                   >
-                    {goingGlobal ? "Publishing…" : "Go to Global Leaderboard →"}
-                  </button>
-                  <button
-                    onClick={() => {
-                      setSelectedRoomId(null);
-                      setPhase("lobby");
-                      setChallenge(null);
-                    }}
-                    className="btn-secondary flex-1 min-w-[200px] py-3 text-sm"
-                  >
-                    Lobby Dashboard
+                    {goingGlobal ? "Publishing…" : "View Leaderboard →"}
                   </button>
                 </div>
               </motion.div>
