@@ -668,7 +668,7 @@ export default function PlayPage() {
         if (cancelled) return;
 
         if (vs.videoScore != null) {
-          const composite = vs.compositeScore ?? Math.round(ctx.score.score * 0.5 + vs.videoScore * 0.5);
+          const composite = vs.compositeScore ?? Math.round(ctx.score.score * 0.3 + vs.videoScore * 0.7);
           if (vs.feedback) setVideoFeedback(vs.feedback);
           setVideoScore(vs.videoScore);
           publishGlobalScore(composite, vs.videoScore);
@@ -1471,18 +1471,18 @@ export default function PlayPage() {
                 {/* Side-by-Side Dual Video — shown right under the standings */}
                 {userVideo && <DualVideo originalSrc={challenge.videoUrl} userSrc={userVideo.videoUrl} />}
 
-                {/* Final score + evaluation details (one combined score, no separate numbers) */}
+                {/* Final score + evaluation details — only shown once video similarity is ready */}
                 {(() => {
-                  // While the video score is still computing, show a loading ring
-                  // instead of a number so the first value shown is the final score.
-                  const scoringNow = scoring && videoScore == null;
-                  const finalScore = videoScore != null ? Math.round(result.score * 0.5 + videoScore * 0.5) : result.score;
+                  // finalScore is ONLY computed once videoScore arrives (30% text + 70% video)
+                  const finalScore = videoScore != null
+                    ? Math.round(result.score * 0.3 + videoScore * 0.7)
+                    : null;
                   return (
                     <div className="graphite-card p-5">
                       <div className="flex flex-col sm:flex-row items-center gap-5">
-                        {/* Big final-score ring — spinner while scoring, value once ready */}
+                        {/* Big final-score ring — spinner while waiting, value once ready */}
                         <div className="relative flex-shrink-0 h-28 w-28 flex items-center justify-center">
-                          {scoringNow ? (
+                          {finalScore == null ? (
                             <>
                               <motion.svg
                                 className="h-28 w-28"
@@ -1494,7 +1494,7 @@ export default function PlayPage() {
                                 <circle cx="18" cy="18" r="16" fill="none" stroke="#0066FF" strokeWidth="2.5" strokeLinecap="round" strokeDasharray="22 100" />
                               </motion.svg>
                               <div className="absolute flex flex-col items-center">
-                                <span className="text-[11px] uppercase tracking-wider text-[#0066FF] font-mono font-bold">Scoring</span>
+                                <span className="text-[11px] uppercase tracking-wider text-[#0066FF] font-mono font-bold">Wait</span>
                                 <motion.span
                                   className="text-[9px] text-zinc-500 font-mono mt-0.5"
                                   animate={{ opacity: [0.3, 1, 0.3] }}
@@ -1527,36 +1527,32 @@ export default function PlayPage() {
                         {/* Headline remark */}
                         <div className="flex-1 text-center sm:text-left">
                           <p className="text-base sm:text-lg font-bold text-white leading-snug">
-                            {scoringNow ? "Comparing your video to the reference…" : evaluationRemark(finalScore)}
+                            {finalScore == null ? "Calculating your final score…" : evaluationRemark(finalScore)}
                           </p>
                           <p className="mt-1.5 text-xs text-zinc-500 font-mono">
-                            {scoringNow
-                              ? "Your final score is being calculated"
-                              : videoScore != null
-                              ? "Based on combined prompt + video similarity"
-                              : userVideo
-                              ? "Based on prompt similarity (video comparison unavailable)"
-                              : "Based on prompt similarity"}
+                            {finalScore == null
+                              ? "Please wait — analyzing your video against the reference"
+                              : "Based on combined prompt (30%) + video similarity (70%)"}
                           </p>
                         </div>
                       </div>
 
-                      {/* Evaluation details — qualitative remarks (no separate numbers) */}
-                      <div className="mt-4 rounded-lg border border-zinc-800 bg-black/40 p-3.5 space-y-3">
-                        <p className="text-[10px] uppercase font-bold tracking-wider text-zinc-500 font-mono">Evaluation Details</p>
-                        <div className="flex gap-3">
-                          <span className="mt-0.5 text-[10px] font-bold font-mono text-[#0066FF] uppercase w-12 flex-shrink-0">Prompt</span>
-                          <p className="flex-1 text-xs text-zinc-300 leading-relaxed">{result.feedback}</p>
+                      {/* Evaluation details — only shown once final score is ready */}
+                      {finalScore != null && (
+                        <div className="mt-4 rounded-lg border border-zinc-800 bg-black/40 p-3.5 space-y-3">
+                          <p className="text-[10px] uppercase font-bold tracking-wider text-zinc-500 font-mono">Evaluation Details</p>
+                          <div className="flex gap-3">
+                            <span className="mt-0.5 text-[10px] font-bold font-mono text-[#0066FF] uppercase w-12 flex-shrink-0">Prompt</span>
+                            <p className="flex-1 text-xs text-zinc-300 leading-relaxed">{result.feedback}</p>
+                          </div>
+                          <div className="flex gap-3 border-t border-zinc-900 pt-3">
+                            <span className="mt-0.5 text-[10px] font-bold font-mono text-[#8b5cf6] uppercase w-12 flex-shrink-0">Video</span>
+                            <p className="flex-1 text-xs text-zinc-300 leading-relaxed">
+                              {videoFeedback ?? (userVideo ? "Video comparison unavailable for this attempt." : "No video was generated for this attempt.")}
+                            </p>
+                          </div>
                         </div>
-                        <div className="flex gap-3 border-t border-zinc-900 pt-3">
-                          <span className="mt-0.5 text-[10px] font-bold font-mono text-[#8b5cf6] uppercase w-12 flex-shrink-0">Video</span>
-                          <p className="flex-1 text-xs text-zinc-300 leading-relaxed">
-                            {scoringNow
-                              ? "Analyzing your video against the reference…"
-                              : videoFeedback ?? (userVideo ? "Video comparison unavailable for this attempt." : "No video was generated for this attempt.")}
-                          </p>
-                        </div>
-                      </div>
+                      )}
 
                       {/* Your prompt */}
                       <div className="mt-3 rounded border border-zinc-800 bg-black/30 px-3 py-2.5">
