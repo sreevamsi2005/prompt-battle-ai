@@ -16,6 +16,7 @@ export async function GET() {
         hasBlobs: !!process.env.NETLIFY_BLOBS_CONTEXT,
         hasFalKey: !!process.env.FAL_KEY,
         hasOpenAI: !!process.env.OPENAI_API_KEY,
+        hasGemini: !!process.env.GEMINI_API_KEY,
         hasAdminPw: !!process.env.ADMIN_PASSWORD,
       },
     });
