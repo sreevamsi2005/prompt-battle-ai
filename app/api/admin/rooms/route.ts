@@ -63,9 +63,14 @@ export async function PUT(req: NextRequest) {
     const body = await req.json();
     const { challengeId } = body as { challengeId: string | null };
     if (!id) return NextResponse.json({ error: "Room ID required" }, { status: 400 });
+    // Detect a genuine challenge change so a new round starts with clean
+    // standings (re-saving the same challenge keeps the current ones).
+    const before = (await loadRooms()).find(r => r.id === id);
+    const challengeChanged = !!before && before.activeChallengeId !== challengeId;
     const room = await updateRoomChallenge(id, challengeId);
     if (!room) return NextResponse.json({ error: "Room not found" }, { status: 404 });
     await clearReplayRequests(id);
+    if (challengeChanged) await clearRoomSubmissions(id);
     const rooms = await loadRooms();
     return NextResponse.json(await enrichRooms(rooms));
   } catch (err) {
@@ -85,9 +90,11 @@ export async function PATCH(req: NextRequest) {
     const { action } = body;
 
     if (action === "reset-session") {
-      // Page-only reset: clear the challenge/battle/players and bump resetAt so
-      // every connected device returns to the /play lobby. Scores are NOT
-      // touched — any player who already played stays on the leaderboard.
+      // Session reset: clear this room's per-session standings, clear the
+      // challenge/battle/players, and bump resetAt so every connected device
+      // returns to the /play lobby. The GLOBAL leaderboard is a separate store
+      // and is NOT touched here — anyone who already played stays on it.
+      await clearRoomSubmissions(id);
       await clearReplayRequests(id);
       await resetRoom(id);
     } else if (action === "reset-scores") {
@@ -99,6 +106,7 @@ export async function PATCH(req: NextRequest) {
       const pick = getRandomPrompt();
       await updateRoomChallenge(id, pick.id);
       await clearReplayRequests(id);
+      await clearRoomSubmissions(id); // new round → fresh standings
     } else if (action === "update-max-users") {
       const max = Number(body.maxUsers);
       if (isNaN(max) || max < 1) return NextResponse.json({ error: "Invalid maxUsers" }, { status: 400 });
