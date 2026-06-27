@@ -226,7 +226,7 @@ export async function updateRoomSubmissionWithVideoScore(
   videoScore: number,
   textScore: number
 ): Promise<RoomSubmission | null> {
-  const compositeScore = Math.round(textScore * 0.5 + videoScore * 0.5);
+  const compositeScore = Math.round(textScore * 0.3 + videoScore * 0.7);
   const name = playerName.trim();
   const updated = await blobUpdate<RoomSubmission[]>("rooms", "submissions", [], (current) => {
     const submission = current.find(

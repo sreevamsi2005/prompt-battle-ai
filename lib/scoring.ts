@@ -1,10 +1,10 @@
 export type Difficulty = "easy" | "medium" | "hard";
 
-// The FINAL score is a plain 50/50 blend of prompt (text) and video similarity —
-// no difficulty normalization. Until the video is analyzed it's just the text score.
-export function computeFinalScore(textScore: number, videoScore?: number | null): number {
-  if (videoScore == null) return Math.round(textScore);
-  return Math.round(textScore * 0.5 + videoScore * 0.5);
+// The FINAL score is 30% prompt (text) + 70% video similarity.
+// Until the video is analyzed the score stays null — never show text score alone.
+export function computeFinalScore(textScore: number, videoScore?: number | null): number | null {
+  if (videoScore == null) return null;
+  return Math.round(textScore * 0.3 + videoScore * 0.7);
 }
 
 // A short qualitative remark for the results screen, based on the final score.
