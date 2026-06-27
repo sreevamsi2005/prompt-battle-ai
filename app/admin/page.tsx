@@ -210,14 +210,19 @@ export default function AdminPage() {
 
   function buildRoundRankings(r: RoomAdminState) {
     const submitted = r.submissions ?? [];
-    const finalOf = (s: { compositeScore?: number; score: number }) => s.compositeScore ?? s.score;
+    const finalOf = (s: { compositeScore?: number; score: number }) => s.compositeScore ?? null;
     const submittedNames = new Set(submitted.map(s => s.playerName.toLowerCase()));
     const pending = (r.players ?? [])
       .filter(p => !submittedNames.has(p.playerName.toLowerCase()))
       .map(p => ({ playerName: p.playerName, score: null as number | null, finalScore: null as number | null, timeTakenToPrompt: null as number | null, prompt: undefined as string | undefined, videoScore: undefined as number | undefined, compositeScore: undefined as number | undefined, autoSubmitted: false }));
-    const sorted = [...submitted].sort((a, b) =>
-      finalOf(b) !== finalOf(a) ? finalOf(b) - finalOf(a) : a.timeTakenToPrompt - b.timeTakenToPrompt
-    );
+    const sorted = [...submitted].sort((a, b) => {
+      const fa = finalOf(a);
+      const fb = finalOf(b);
+      if (fa === null && fb === null) return a.timeTakenToPrompt - b.timeTakenToPrompt;
+      if (fa === null) return 1;
+      if (fb === null) return -1;
+      return fb !== fa ? fb - fa : a.timeTakenToPrompt - b.timeTakenToPrompt;
+    });
     return [
       ...sorted.map(s => ({ playerName: s.playerName, score: s.score, finalScore: finalOf(s), timeTakenToPrompt: s.timeTakenToPrompt, prompt: s.prompt, videoScore: s.videoScore, compositeScore: s.compositeScore, autoSubmitted: !!s.autoSubmitted })),
       ...pending,
@@ -271,7 +276,7 @@ export default function AdminPage() {
                 <div className="flex-1 space-y-1.5 overflow-y-auto min-h-0 pr-0.5">
                   {buildRoundRankings(heroRoom).length > 0 ? (
                     buildRoundRankings(heroRoom).map((entry, idx) => {
-                      const submitted = entry.finalScore !== null;
+                      const submitted = entry.score !== null;
                       const rankStyle = idx < 3 && submitted ? RANK_STYLE[idx] : "border-zinc-800/60 bg-black/30 text-zinc-400";
                       return (
                         <div key={entry.playerName + idx} className={`flex items-center gap-2.5 rounded-lg border px-3 py-2.5 ${rankStyle}`}>
@@ -285,8 +290,8 @@ export default function AdminPage() {
                           </span>
                           {submitted ? (
                             <div className="flex-shrink-0 text-right">
-                              <p className={`text-sm font-bold font-mono leading-none ${idx === 0 ? "text-yellow-300" : ""}`}>
-                                {entry.finalScore} score{entry.autoSubmitted ? " ⏱" : ""}
+                              <p className={`text-sm font-bold font-mono leading-none ${idx === 0 && entry.finalScore != null ? "text-yellow-300" : ""}`}>
+                                {entry.finalScore != null ? `${entry.finalScore} score` : "scoring..."}{entry.autoSubmitted ? " ⏱" : ""}
                               </p>
                               <p className={`text-[10px] font-mono mt-0.5 ${entry.videoScore == null ? "text-[#0066FF] animate-pulse" : "text-zinc-500"}`}>
                                 {entry.videoScore == null
