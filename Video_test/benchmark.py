@@ -53,8 +53,8 @@ def _load_dotenv_keys():
 _dotenv = _load_dotenv_keys()
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY") or _dotenv.get("OPENAI_API_KEY", "")
-GEMINI_API_KEY = (os.getenv("GEMINI_API_KEY") or _dotenv.get("GEMINI_API_KEY")
-                  or "AIzaSyCP9FyY_c_613r9GOAZwtq5sdFnDEXVLEA")  # Gemini free tier
+# Never hardcode keys — provide via env var or the project .env (gitignored).
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") or _dotenv.get("GEMINI_API_KEY", "")
 
 GPT_MODEL    = "gpt-4o-mini"   # existing prod model (gpt-5.4-mini in prod = same vision)
 GEMINI_MODEL = "gemini-2.5-flash"  # thinking model — needs large max_output_tokens

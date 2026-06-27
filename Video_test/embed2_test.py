@@ -39,7 +39,7 @@ def load_key():
                     v = line.split("=", 1)[1].strip().strip('"').strip("'")
                     if v:
                         return v
-    return "AIzaSyCP9FyY_c_613r9GOAZwtq5sdFnDEXVLEA"
+    return os.getenv("GEMINI_API_KEY", "")  # never hardcode keys
 
 
 def extract_frames(path, count=NUM_FRAMES):
