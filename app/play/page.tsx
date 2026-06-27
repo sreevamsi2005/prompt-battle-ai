@@ -1468,6 +1468,9 @@ export default function PlayPage() {
                   </div>
                 )}
 
+                {/* Side-by-Side Dual Video — shown right under the standings */}
+                {userVideo && <DualVideo originalSrc={challenge.videoUrl} userSrc={userVideo.videoUrl} />}
+
                 {/* Final score + evaluation details (one combined score, no separate numbers) */}
                 {(() => {
                   // While the video score is still computing, show a loading ring
@@ -1563,9 +1566,6 @@ export default function PlayPage() {
                     </div>
                   );
                 })()}
-
-                {/* Side-by-Side Dual Video */}
-                {userVideo && <DualVideo originalSrc={challenge.videoUrl} userSrc={userVideo.videoUrl} />}
 
                 {/* Final action bar — only the leaderboard button remains */}
                 <div className="flex border-t border-zinc-900 pt-4 mt-2">
