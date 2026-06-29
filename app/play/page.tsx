@@ -69,6 +69,12 @@ const SCORE_MSGS = [
   "Synthesizing final similarity score…",
 ];
 
+// A player who enters the battle more than this long after it started is treated
+// as a late joiner (e.g. slow connection) and gets their own fresh 60s countdown
+// so connection lag never costs them their turn or their score. Players who were
+// present when the host started stay on the synchronized shared clock.
+const LATE_JOIN_GRACE_MS = 5000;
+
 /* ─── Spinning message component ─────────────────────────────────────────── */
 function SpinningMessages({ msgs }: { msgs: string[] }) {
   const [i, setI] = useState(0);
@@ -274,22 +280,22 @@ function ChallengeTimer({ seconds }: { seconds: number | null }) {
 
   return (
     <motion.div
-      animate={danger ? { x: [0, -2, 2, -2, 2, 0] } : { x: 0 }}
+      animate={danger ? { x: [0, -3, 3, -3, 3, 0] } : { x: 0 }}
       transition={danger ? { duration: 0.45, repeat: Infinity, repeatDelay: 0.25 } : { duration: 0.2 }}
-      className={`relative flex items-center gap-2 rounded border px-3 py-1.5 font-mono text-sm font-bold transition-colors select-none ${
-        expired   ? "border-rose-500/70 bg-rose-500/20 text-rose-300" :
-        danger    ? "border-rose-500/70 bg-rose-500/15 text-rose-300" :
-                    "border-zinc-700 bg-zinc-900/80 text-zinc-200"
+      className={`relative flex items-center gap-2.5 rounded-lg border-2 px-4 py-2 font-mono font-bold transition-colors select-none shadow-lg ${
+        expired   ? "border-rose-500 bg-rose-500/25 text-rose-200 shadow-rose-500/30" :
+        danger    ? "border-rose-500 bg-rose-500/20 text-rose-200 shadow-rose-500/30" :
+                    "border-zinc-600 bg-zinc-900/90 text-zinc-100"
       }`}
     >
       {danger && (
-        <span className="absolute -top-1 -right-1 flex h-2.5 w-2.5">
+        <span className="absolute -top-1.5 -right-1.5 flex h-3.5 w-3.5">
           <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-rose-500 opacity-75" />
-          <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-rose-500" />
+          <span className="relative inline-flex h-3.5 w-3.5 rounded-full bg-rose-500" />
         </span>
       )}
-      {danger && <span className="text-xs">⚠</span>}
-      <svg className={`h-3.5 w-3.5 ${danger || expired ? "text-rose-400" : "text-zinc-500"}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+      {danger && <span className="text-lg">⚠</span>}
+      <svg className={`h-6 w-6 ${danger || expired ? "text-rose-400" : "text-zinc-400"}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
         <circle cx="12" cy="12" r="10" />
         <polyline points="12 6 12 12 16 14" />
       </svg>
@@ -297,7 +303,7 @@ function ChallengeTimer({ seconds }: { seconds: number | null }) {
         <motion.span
           animate={{ scale: [1, 1.12, 1], opacity: [1, 0.6, 1] }}
           transition={{ duration: 0.7, repeat: Infinity }}
-          className="text-rose-300 font-extrabold tracking-widest text-xs"
+          className="text-rose-200 font-extrabold tracking-widest text-lg"
         >
           TIME&apos;S UP
         </motion.span>
@@ -307,12 +313,12 @@ function ChallengeTimer({ seconds }: { seconds: number | null }) {
           initial={{ scale: 1.6, opacity: 0.3 }}
           animate={{ scale: 1, opacity: 1 }}
           transition={{ duration: 0.3 }}
-          className="text-rose-200 font-extrabold text-base"
+          className="text-rose-100 font-extrabold text-4xl tabular-nums leading-none"
         >
-          {seconds}<span className="text-xs ml-px opacity-60">s</span>
+          {seconds}<span className="text-lg ml-0.5 opacity-60">s</span>
         </motion.span>
       ) : (
-        <span>{seconds}<span className="text-xs ml-px opacity-60">s</span></span>
+        <span className="text-3xl tabular-nums leading-none">{seconds}<span className="text-lg ml-0.5 opacity-60">s</span></span>
       )}
     </motion.div>
   );
@@ -372,6 +378,10 @@ export default function PlayPage() {
   // not yet baselined (set on the first heartbeat after joining).
   const resetBaselineRef = useRef<number | null | undefined>(undefined);
   const challengeStartTimeRef = useRef<number | null>(null);
+  // When this client entered the playing phase for the current round. On-time
+  // players share the synchronized countdown (from battleStartedAt); late joiners
+  // start their own fresh 60s from here so they can still submit and be scored.
+  const playingEnteredAtRef = useRef<number | null>(null);
   // Guards the timer's auto-submit so it fires at most once per challenge.
   const autoSubmittedRef = useRef(false);
   const recognitionRef = useRef<any>(null);
@@ -458,9 +468,13 @@ export default function PlayPage() {
 
           // A "round" is one challenge + one battle start. When either changes,
           // it's a fresh round: reset state and route to waiting / playing.
-          // Treat a battle as live only within its 60s window — a stale timestamp
-          // from a previous round must not skip the waiting screen or show "time's up".
-          const started = data.battleStartedAt != null && Date.now() - data.battleStartedAt < 60_000;
+          // A battle is playable for this client whenever a challenge is set and
+          // the host has started it. We intentionally do NOT gate on the 60s
+          // prompt window: a player who joins late (slow connection, joined
+          // mid-round) must still be able to play and be scored. On-time players
+          // share the synchronized countdown; late joiners get their own fresh
+          // 60s (see the challenge-timer effect below).
+          const started = data.battleStartedAt != null && !!data.challengeDetails;
           const roundKey = `${data.activeChallengeId ?? ""}:${data.battleStartedAt ?? ""}`;
           if (roundKey !== roundKeyRef.current) {
             roundKeyRef.current = roundKey;
@@ -475,7 +489,8 @@ export default function PlayPage() {
             setVideoFeedback(null);
             setVideoGated(false);
             // Battle started + challenge ready → play; otherwise wait for players.
-            setPhase(started && data.challengeDetails ? "playing" : "waiting");
+            if (started) playingEnteredAtRef.current = Date.now();
+            setPhase(started ? "playing" : "waiting");
           }
         } else {
           // Room full or deleted
@@ -498,7 +513,18 @@ export default function PlayPage() {
   // battleStartedAt so every player's clock is synchronized; solo counts from now.
   useEffect(() => {
     if (phase === "playing" && challenge) {
-      const start = selectedRoomId && battleStartedAt ? battleStartedAt : Date.now();
+      // On-time players share the synchronized countdown from battleStartedAt.
+      // A late joiner (slow connection / joined mid-round) entered the playing
+      // phase well after the battle started — give them their own fresh 60s so
+      // they can still prompt and be scored instead of seeing an expired timer.
+      let start: number;
+      if (selectedRoomId && battleStartedAt) {
+        const enteredAt = playingEnteredAtRef.current ?? Date.now();
+        const lateBy = enteredAt - battleStartedAt;
+        start = lateBy > LATE_JOIN_GRACE_MS ? enteredAt : battleStartedAt;
+      } else {
+        start = Date.now();
+      }
       challengeStartTimeRef.current = start;
       autoSubmittedRef.current = false;
       const tick = () => {
