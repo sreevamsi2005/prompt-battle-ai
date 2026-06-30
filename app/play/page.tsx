@@ -1272,32 +1272,6 @@ export default function PlayPage() {
 
                 {/* RIGHT: Prompt Input Panel */}
                 <div className="flex flex-col gap-4 min-w-0 justify-between">
-                  {/* Sync status & active players */}
-                  {selectedRoomId && roomState && (
-                    <div className="graphite-card p-4">
-                      <p className="text-xs uppercase font-bold text-zinc-500 font-mono tracking-wider">
-                        Connected Booth Laptops ({roomState.players?.length})
-                      </p>
-                      <div className="mt-2.5 flex flex-wrap gap-2">
-                        {roomState.players?.map((p) => (
-                          <span
-                            key={p.playerName}
-                            className={`inline-flex items-center gap-1.5 rounded px-2.5 py-1 text-xs font-mono border ${
-                              p.hasSubmitted
-                                ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400 font-semibold"
-                                : p.playerName.toLowerCase() === playerName.toLowerCase()
-                                ? "bg-[#0066FF]/10 border-[#0066FF]/30 text-[#0066FF] font-semibold"
-                                : "bg-zinc-900/60 border-zinc-800 text-zinc-500"
-                            }`}
-                          >
-                            <span>{p.playerName}</span>
-                            {p.hasSubmitted && <span className="text-xs">✓</span>}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
                   {/* Instruction */}
                   <div className="graphite-card p-4">
                     <h3 className="text-sm font-bold text-white uppercase tracking-tight">Decryption Guidance</h3>
