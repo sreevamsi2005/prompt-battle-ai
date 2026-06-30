@@ -278,48 +278,40 @@ function ChallengeTimer({ seconds }: { seconds: number | null }) {
   const danger = seconds > 0 && seconds <= 10;
   const expired = seconds === 0;
 
+  const accent = danger || expired;
+
   return (
     <motion.div
-      animate={danger ? { x: [0, -3, 3, -3, 3, 0] } : { x: 0 }}
-      transition={danger ? { duration: 0.45, repeat: Infinity, repeatDelay: 0.25 } : { duration: 0.2 }}
-      className={`relative flex items-center gap-2.5 rounded-lg border-2 px-4 py-2 font-mono font-bold transition-colors select-none shadow-lg ${
-        expired   ? "border-rose-500 bg-rose-500/25 text-rose-200 shadow-rose-500/30" :
-        danger    ? "border-rose-500 bg-rose-500/20 text-rose-200 shadow-rose-500/30" :
-                    "border-zinc-600 bg-zinc-900/90 text-zinc-100"
+      animate={danger ? { x: [0, -2, 2, -2, 2, 0] } : { x: 0 }}
+      transition={danger ? { duration: 0.45, repeat: Infinity, repeatDelay: 0.3 } : { duration: 0.2 }}
+      className={`relative flex items-center gap-2.5 rounded-lg border px-3 py-1.5 select-none transition-colors ${
+        accent ? "border-rose-500/60 bg-rose-500/10" : "border-zinc-700 bg-zinc-900/80"
       }`}
     >
       {danger && (
-        <span className="absolute -top-1.5 -right-1.5 flex h-3.5 w-3.5">
+        <span className="absolute -top-1 -right-1 flex h-2.5 w-2.5">
           <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-rose-500 opacity-75" />
-          <span className="relative inline-flex h-3.5 w-3.5 rounded-full bg-rose-500" />
+          <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-rose-500" />
         </span>
       )}
-      {danger && <span className="text-lg">⚠</span>}
-      <svg className={`h-6 w-6 ${danger || expired ? "text-rose-400" : "text-zinc-400"}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+      <svg className={`h-5 w-5 flex-shrink-0 ${accent ? "text-rose-400" : "text-zinc-500"}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
         <circle cx="12" cy="12" r="10" />
         <polyline points="12 6 12 12 16 14" />
       </svg>
-      {expired ? (
-        <motion.span
-          animate={{ scale: [1, 1.12, 1], opacity: [1, 0.6, 1] }}
-          transition={{ duration: 0.7, repeat: Infinity }}
-          className="text-rose-200 font-extrabold tracking-widest text-lg"
-        >
-          TIME&apos;S UP
-        </motion.span>
-      ) : danger ? (
+      <div className="flex flex-col leading-none">
+        <span className={`text-[9px] font-mono font-bold uppercase tracking-[0.15em] mb-1 ${accent ? "text-rose-400/90" : "text-zinc-500"}`}>
+          {expired ? "Time's Up" : "Time Left"}
+        </span>
         <motion.span
           key={seconds}
-          initial={{ scale: 1.6, opacity: 0.3 }}
+          initial={danger ? { scale: 1.25, opacity: 0.6 } : false}
           animate={{ scale: 1, opacity: 1 }}
-          transition={{ duration: 0.3 }}
-          className="text-rose-100 font-extrabold text-4xl tabular-nums leading-none"
+          transition={{ duration: 0.25 }}
+          className={`font-mono font-extrabold tabular-nums leading-none text-2xl ${accent ? "text-rose-100" : "text-zinc-50"}`}
         >
-          {seconds}<span className="text-lg ml-0.5 opacity-60">s</span>
+          {seconds}<span className="text-sm font-bold opacity-50 ml-px">s</span>
         </motion.span>
-      ) : (
-        <span className="text-3xl tabular-nums leading-none">{seconds}<span className="text-lg ml-0.5 opacity-60">s</span></span>
-      )}
+      </div>
     </motion.div>
   );
 }
