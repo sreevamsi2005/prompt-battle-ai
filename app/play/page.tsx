@@ -944,7 +944,7 @@ export default function PlayPage() {
               {phase === "lobby" ? "Select Game Mode" : selectedRoomId ? "Multiplayer Synced Match" : "Solo Match Practice"}
             </h1>
             {selectedRoomId && roomState && (
-              <span className="flex items-center gap-2 rounded bg-[#0066FF]/10 border border-[#0066FF]/30 px-3 py-1 text-xs text-[#0066FF] font-mono font-semibold">
+              <span className="flex items-center gap-2 rounded-lg bg-[#0066FF]/10 border border-[#0066FF]/30 px-3 py-1.5 text-xs text-[#0066FF] font-mono font-semibold">
                 <span className="h-2 w-2 rounded-full bg-[#0066FF] sync-dot" />
                 {roomState.name}
               </span>
@@ -956,24 +956,30 @@ export default function PlayPage() {
             )}
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-stretch gap-3">
             {/* Challenge timer — visible only while playing */}
             {phase === "playing" && <ChallengeTimer seconds={timeLeft} />}
 
-            {/* User Badge */}
+            {/* User Badge — mirrors the timer stat-chip (icon + label + value) */}
             {phase !== "lobby" && (
-              <div className="flex items-center gap-3 rounded border border-zinc-700 bg-zinc-950 px-3 py-1.5">
-                <span className="text-xs text-zinc-500 font-mono">User:</span>
-                <span className="text-xs font-bold text-white font-mono">{playerName}</span>
+              <div className="flex items-center gap-2.5 rounded-lg border border-zinc-700 bg-zinc-900/80 px-3 py-1.5">
+                <svg className="h-5 w-5 flex-shrink-0 text-zinc-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                  <circle cx="12" cy="8" r="4" />
+                  <path d="M4 21c0-4 4-6 8-6s8 2 8 6" strokeLinecap="round" />
+                </svg>
+                <div className="flex flex-col leading-none">
+                  <span className="text-[9px] font-mono font-bold uppercase tracking-[0.15em] text-zinc-500 mb-1">Player</span>
+                  <span className="font-mono font-bold text-base text-white leading-none truncate max-w-[140px]">{playerName}</span>
+                </div>
                 <button
                   onClick={() => {
                     setSelectedRoomId(null);
                     setPhase("lobby");
                     setChallenge(null);
                   }}
-                  className="text-xs text-zinc-400 hover:text-zinc-200 ml-3 border-l border-zinc-800 pl-3 font-medium"
+                  className="ml-1 self-stretch flex items-center border-l border-zinc-800 pl-3 text-xs font-semibold text-zinc-400 hover:text-rose-300 transition-colors"
                 >
-                  Exit Game
+                  Exit
                 </button>
               </div>
             )}
