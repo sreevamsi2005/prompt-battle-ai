@@ -686,7 +686,7 @@ export default function PlayPage() {
         if (cancelled) return;
 
         if (vs.videoScore != null) {
-          const composite = vs.compositeScore ?? Math.round(ctx.score.score * 0.3 + vs.videoScore * 0.7);
+          const composite = vs.compositeScore ?? Math.round(ctx.score.score * 0.2 + vs.videoScore * 0.8);
           if (vs.feedback) setVideoFeedback(vs.feedback);
           setVideoScore(vs.videoScore);
           publishGlobalScore(composite, vs.videoScore);
@@ -1471,9 +1471,9 @@ export default function PlayPage() {
 
                 {/* Final score + evaluation details — only shown once video similarity is ready */}
                 {(() => {
-                  // finalScore is ONLY computed once videoScore arrives (30% text + 70% video)
+                  // finalScore is ONLY computed once videoScore arrives (20% text + 80% video)
                   const finalScore = videoScore != null
-                    ? Math.round(result.score * 0.3 + videoScore * 0.7)
+                    ? Math.round(result.score * 0.2 + videoScore * 0.8)
                     : null;
                   return (
                     <div className="graphite-card p-5">
@@ -1530,7 +1530,7 @@ export default function PlayPage() {
                           <p className="mt-1.5 text-xs text-zinc-500 font-mono">
                             {finalScore == null
                               ? "Please wait — analyzing your video against the reference"
-                              : "Based on combined prompt (30%) + video similarity (70%)"}
+                              : "Based on combined prompt (20%) + video similarity (80%)"}
                           </p>
                         </div>
                       </div>

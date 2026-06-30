@@ -12,9 +12,10 @@ const FFMPEG_BIN: string = ffmpegInstaller.path;
 // reference and user vectors becomes the score. This beat CLIP/GPT-Vision/pHash
 // in benchmarking (highest agreement with human-style judges, cleanest spread).
 const EMBED_MODEL = "gemini-embedding-2";
-// Cosine→score mapping calibrated on the booth's reference set: identical
-// videos score 1.0, strong matches ~0.92, weak matches ~0.75, unrelated ~0.60.
-const COS_FLOOR = 0.6; // cosine at/below this maps to 0
+// Cosine→score mapping: anything at/below 0.75 scores 0; from 0.75→1.0 it scales
+// linearly to 0→100, i.e. score = round(100 * (cosine - 0.75) / 0.25). This makes
+// the booth stricter — only genuinely close visual matches earn points.
+const COS_FLOOR = 0.75; // cosine at/below this maps to 0
 const COS_CEIL = 1.0; // cosine at/above this maps to 100
 
 export interface VideoAnalysisResult {

@@ -72,7 +72,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: message, stage: "vision_scoring", videoScore: null, compositeScore: textScore }, { status: 200 });
     }
 
-    const compositeScore = Math.round(textScore * 0.3 + videoScore * 0.7);
+    const compositeScore = Math.round(textScore * 0.2 + videoScore * 0.8);
 
     // Stage 3: update room submission with video + composite scores
     if (roomId) {

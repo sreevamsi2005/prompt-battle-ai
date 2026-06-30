@@ -26,15 +26,23 @@ An LLM compares the player's prompt to the challenge's original prompt and retur
 
 ## 2. Video similarity — `app/api/video-similarity/route.ts` + `lib/video-analysis.ts`
 After the player's video generates (fal.ai), we extract 4 frames each from the
-reference and the player's video and ask a vision model to score how closely they
-match (theme, subject, color, mood, style) → `{ score: 0–100, feedback }`. The
-`feedback` becomes the "Video" remark on results. This runs in the background, so
-the final score updates a moment after results appear.
+reference and the player's video, embed them with Google `gemini-embedding-2`
+(mean-pooled into one vector per video), and take the cosine similarity → a
+`{ score: 0–100, feedback }`. The cosine is mapped to a score with a strict floor:
+
+```
+if cosine <= 0.75:  score = 0
+else:               score = round(100 * (cosine - 0.75) / 0.25)
+```
+
+Only genuinely close visual matches earn points. The `feedback` becomes the
+"Video" remark on results. This runs in the background, so the final score updates
+a moment after results appear.
 
 ## 3. Final score (the only score shown) — `lib/scoring.ts` → `computeFinalScore`
 
 ```
-finalScore = round(textScore * 0.5 + videoScore * 0.5)
+finalScore = round(textScore * 0.2 + videoScore * 0.8)
 ```
 
 - If no video was generated (e.g. solo prompt ≤70, or generation failed/skipped),
@@ -80,6 +88,7 @@ Instead of separate numbers, results show:
 ---
 
 ## Tuning
-- The 50/50 blend lives in `lib/scoring.ts` (`computeFinalScore`), `lib/rooms.ts`,
-  and `app/api/video-similarity/route.ts`.
+- The 20/80 (text/video) blend lives in `lib/scoring.ts` (`computeFinalScore`),
+  `lib/rooms.ts`, `app/api/video-similarity/route.ts`, and `app/play/page.tsx`.
+- The cosine→score floor (`COS_FLOOR = 0.75`) lives in `lib/video-analysis.ts`.
 - Result remarks: `evaluationRemark` in `lib/scoring.ts`.
