@@ -1408,63 +1408,79 @@ export default function PlayPage() {
                   </div>
                 )}
                 {/* Room standings — Olympic podium: 2nd left · 1st center (tallest) · 3rd right */}
-                {selectedRoomId && roomState && (
-                  <div className="graphite-card p-4">
-                    <h3 className="text-xs sm:text-sm font-bold text-white uppercase tracking-wider font-mono flex items-center justify-between border-b border-zinc-900 pb-2.5">
-                      <span>Room Standings</span>
-                      <span className="text-[10px] text-[#0066FF] font-mono font-semibold normal-case">Live Synced</span>
-                    </h3>
-                    {(roomState.submissions || []).length > 0 ? (() => {
-                      const subs = roomState.submissions.slice(0, 5);
-                      // Classic podium order: 2nd, 1st, 3rd, 4th, 5th
-                      const podium = subs.length >= 2 ? [subs[1], subs[0], ...subs.slice(2)] : subs;
-                      // Bar heights for podium positions [2nd, 1st, 3rd, 4th, 5th]
-                      const barHeights = [96, 132, 72, 56, 44];
-                      const MEDALS = ["🥇", "🥈", "🥉"];
-                      return (
-                        <div className="flex items-end justify-center gap-2 sm:gap-4 mt-6 mb-1 px-2">
-                          {podium.map((sub, podiumIdx) => {
-                            const rank = subs.indexOf(sub); // 0=1st, 1=2nd, 2=3rd…
-                            const final = sub.compositeScore ?? sub.score;
-                            const isMe = sub.playerName.toLowerCase() === playerName.toLowerCase();
-                            const isWinner = rank === 0;
-                            const barH = barHeights[podiumIdx] ?? 44;
-                            const medalLabel = MEDALS[rank] ?? `#${rank + 1}`;
-                            return (
-                              <div key={sub.playerName + podiumIdx} className="flex flex-col items-center justify-end flex-1 max-w-[110px]">
-                                <span className="text-xl leading-none mb-0.5">{medalLabel}</span>
-                                <span className={`text-[11px] font-mono font-bold truncate max-w-full text-center px-1 ${isMe ? "text-[#0066FF]" : isWinner ? "text-yellow-200" : "text-white"}`}>
-                                  {sub.playerName}{isMe ? " (you)" : ""}
-                                </span>
-                                <span className={`text-sm font-mono font-extrabold leading-tight ${isWinner ? "text-yellow-300" : "text-[#0066FF]"}`}>
-                                  {final}%
-                                </span>
-                                <motion.div
-                                  initial={{ height: 0 }}
-                                  animate={{ height: barH }}
-                                  transition={{ duration: 0.7, ease: "easeOut", delay: podiumIdx * 0.1 }}
-                                  className={`w-full mt-1.5 rounded-t-md border-t border-x flex items-start justify-center pt-1.5 ${
-                                    isWinner
-                                      ? "bg-yellow-500/15 border-yellow-500/40"
-                                      : isMe
-                                      ? "bg-[#0066FF]/25 border-[#0066FF]/50"
-                                      : "bg-zinc-800/70 border-zinc-700"
-                                  }`}
-                                >
-                                  <span className={`text-[10px] font-mono font-bold ${isWinner ? "text-yellow-500/70" : "text-zinc-400"}`}>
-                                    #{rank + 1}
+                {selectedRoomId && roomState && (() => {
+                  // STRICT: rank ONLY by the final composite (text+video) score.
+                  // Submissions still analyzing (compositeScore == null) are excluded
+                  // entirely — never show text-only standings. Sort by composite desc,
+                  // breaking ties by who prompted fastest.
+                  const ranked = (roomState.submissions || [])
+                    .filter((s) => s.compositeScore != null)
+                    .sort((a, b) => (b.compositeScore! - a.compositeScore!) || (a.timeTakenToPrompt - b.timeTakenToPrompt))
+                    .slice(0, 5);
+                  return (
+                    <div className="graphite-card p-4">
+                      <h3 className="text-xs sm:text-sm font-bold text-white uppercase tracking-wider font-mono flex items-center justify-between border-b border-zinc-900 pb-2.5">
+                        <span>Room Standings</span>
+                        <span className="text-[10px] text-[#0066FF] font-mono font-semibold normal-case">Live Synced</span>
+                      </h3>
+                      {ranked.length > 0 ? (() => {
+                        const subs = ranked;
+                        // Classic podium order: 2nd, 1st, 3rd, 4th, 5th
+                        const podium = subs.length >= 2 ? [subs[1], subs[0], ...subs.slice(2)] : subs;
+                        // Bar heights for podium positions [2nd, 1st, 3rd, 4th, 5th]
+                        const barHeights = [96, 132, 72, 56, 44];
+                        const MEDALS = ["🥇", "🥈", "🥉"];
+                        return (
+                          <div className="flex items-end justify-center gap-2 sm:gap-4 mt-6 mb-1 px-2">
+                            {podium.map((sub, podiumIdx) => {
+                              const rank = subs.indexOf(sub); // 0=1st, 1=2nd, 2=3rd…
+                              const final = sub.compositeScore!; // guaranteed non-null (filtered above)
+                              const isMe = sub.playerName.toLowerCase() === playerName.toLowerCase();
+                              const isWinner = rank === 0;
+                              const barH = barHeights[podiumIdx] ?? 44;
+                              const medalLabel = MEDALS[rank] ?? `#${rank + 1}`;
+                              return (
+                                <div key={sub.playerName + podiumIdx} className="flex flex-col items-center justify-end flex-1 max-w-[110px]">
+                                  <span className="text-xl leading-none mb-0.5">{medalLabel}</span>
+                                  <span className={`text-[11px] font-mono font-bold truncate max-w-full text-center px-1 ${isMe ? "text-[#0066FF]" : isWinner ? "text-yellow-200" : "text-white"}`}>
+                                    {sub.playerName}{isMe ? " (you)" : ""}
                                   </span>
-                                </motion.div>
-                              </div>
-                            );
-                          })}
+                                  <span className={`text-sm font-mono font-extrabold leading-tight ${isWinner ? "text-yellow-300" : "text-[#0066FF]"}`}>
+                                    {final}%
+                                  </span>
+                                  <motion.div
+                                    initial={{ height: 0 }}
+                                    animate={{ height: barH }}
+                                    transition={{ duration: 0.7, ease: "easeOut", delay: podiumIdx * 0.1 }}
+                                    className={`w-full mt-1.5 rounded-t-md border-t border-x flex items-start justify-center pt-1.5 ${
+                                      isWinner
+                                        ? "bg-yellow-500/15 border-yellow-500/40"
+                                        : isMe
+                                        ? "bg-[#0066FF]/25 border-[#0066FF]/50"
+                                        : "bg-zinc-800/70 border-zinc-700"
+                                    }`}
+                                  >
+                                    <span className={`text-[10px] font-mono font-bold ${isWinner ? "text-yellow-500/70" : "text-zinc-400"}`}>
+                                      #{rank + 1}
+                                    </span>
+                                  </motion.div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        );
+                      })() : (
+                        <div className="flex flex-col items-center justify-center py-8 gap-2.5">
+                          <div className="h-5 w-5 rounded-full border-2 border-[#0066FF] border-t-transparent animate-spin" />
+                          <p className="text-xs sm:text-sm text-zinc-500 font-mono text-center">
+                            Waiting for final scores…<br />
+                            <span className="text-[10px] text-zinc-600">Standings appear once video analysis completes.</span>
+                          </p>
                         </div>
-                      );
-                    })() : (
-                      <div className="text-center py-8 text-xs sm:text-sm text-zinc-500 font-mono">No scores recorded yet.</div>
-                    )}
-                  </div>
-                )}
+                      )}
+                    </div>
+                  );
+                })()}
 
                 {/* Side-by-Side Dual Video — shown right under the standings */}
                 {userVideo && <DualVideo originalSrc={challenge.videoUrl} userSrc={userVideo.videoUrl} />}
