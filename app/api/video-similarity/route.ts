@@ -3,6 +3,7 @@ import { getPromptById } from "@/lib/booth-prompts";
 import { analyzeVideoSimilarity } from "@/lib/video-analysis";
 import { updateRoomSubmissionWithVideoScore, markRoomSubmissionVideoUnavailable } from "@/lib/rooms";
 import { logEvent } from "@/lib/event-log";
+import { computeFinalScore } from "@/lib/scoring";
 
 // Allow up to 60 s on Netlify (default is 10 s, which isn't enough for
 // frame extraction + vision scoring + blob update).
@@ -73,7 +74,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: message, stage: "video_analysis", videoScore: null, compositeScore: textScore }, { status: 200 });
     }
 
-    const compositeScore = Math.round(textScore * 0.2 + videoScore * 0.8);
+    const compositeScore = computeFinalScore(textScore, videoScore)!;
 
     // Stage 3: update room submission with video + composite scores
     if (roomId) {

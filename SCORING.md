@@ -45,7 +45,7 @@ a moment after results appear.
 ## 3. Final score (the only score shown) — `lib/scoring.ts` → `computeFinalScore`
 
 ```
-finalScore = round(textScore * 0.2 + videoScore * 0.8)
+finalScore = round(textScore * 0.4 + videoScore * 0.6)
 ```
 
 - If no video was generated (e.g. solo prompt ≤70, or generation failed/skipped),
@@ -91,7 +91,9 @@ Instead of separate numbers, results show:
 ---
 
 ## Tuning
-- The 20/80 (text/video) blend lives in `lib/scoring.ts` (`computeFinalScore`),
-  `lib/rooms.ts`, `app/api/video-similarity/route.ts`, and `app/play/page.tsx`.
+- The 40/60 (text/video) blend is defined ONCE in `computeFinalScore()` in
+  `lib/scoring.ts` — `lib/rooms.ts`, `app/api/video-similarity/route.ts`, and
+  `app/play/page.tsx` all call that function rather than hardcoding the weights,
+  so changing the blend only ever requires editing that one place.
 - The cosine→score floor (`COS_FLOOR = 0.75`) lives in `lib/video-analysis.ts`.
 - Result remarks: `evaluationRemark` in `lib/scoring.ts`.

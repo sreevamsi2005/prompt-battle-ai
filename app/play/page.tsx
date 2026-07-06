@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import { getPlayerName, setPlayerName } from "@/lib/leaderboard";
 import { formatApiError } from "@/lib/error-stage";
-import { evaluationRemark } from "@/lib/scoring";
+import { evaluationRemark, computeFinalScore } from "@/lib/scoring";
 import type { ScoreResult } from "@/lib/types";
 
 /* ─── Types ─────────────────────────────────────────────────────────────── */
@@ -686,7 +686,7 @@ export default function PlayPage() {
         if (cancelled) return;
 
         if (vs.videoScore != null) {
-          const composite = vs.compositeScore ?? Math.round(ctx.score.score * 0.2 + vs.videoScore * 0.8);
+          const composite = vs.compositeScore ?? computeFinalScore(ctx.score.score, vs.videoScore)!;
           if (vs.feedback) setVideoFeedback(vs.feedback);
           setVideoScore(vs.videoScore);
           publishGlobalScore(composite, vs.videoScore);
@@ -1487,10 +1487,9 @@ export default function PlayPage() {
 
                 {/* Final score + evaluation details — only shown once video similarity is ready */}
                 {(() => {
-                  // finalScore is ONLY computed once videoScore arrives (20% text + 80% video)
-                  const finalScore = videoScore != null
-                    ? Math.round(result.score * 0.2 + videoScore * 0.8)
-                    : null;
+                  // finalScore is ONLY computed once videoScore arrives — see
+                  // computeFinalScore() in lib/scoring.ts for the weighting.
+                  const finalScore = computeFinalScore(result.score, videoScore);
                   return (
                     <div className="graphite-card p-5">
                       <div className="flex flex-col sm:flex-row items-center gap-5">
@@ -1546,7 +1545,7 @@ export default function PlayPage() {
                           <p className="mt-1.5 text-xs text-zinc-500 font-mono">
                             {finalScore == null
                               ? "Please wait — analyzing your video against the reference"
-                              : "Based on combined prompt (20%) + video similarity (80%)"}
+                              : "Based on combined prompt (40%) + video similarity (60%)"}
                           </p>
                         </div>
                       </div>

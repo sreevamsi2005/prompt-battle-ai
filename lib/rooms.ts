@@ -1,4 +1,5 @@
 import { blobGet, blobSet, blobUpdate } from "./blob-storage";
+import { computeFinalScore } from "./scoring";
 
 export interface ActivePlayer {
   playerName: string;
@@ -28,7 +29,7 @@ export interface RoomSubmission {
   timeTakenToPrompt: number; // seconds
   difficulty: "easy" | "medium" | "hard";  // kept for records only (not scored)
   videoScore?: number;      // visual similarity 0-100 (once analyzed)
-  compositeScore?: number;  // FINAL score = text*0.2 + video*0.8 (null until video arrives)
+  compositeScore?: number;  // FINAL score — see computeFinalScore() in lib/scoring.ts (null until video arrives)
   timestamp: number;
   roomId: string;
   email?: string;
@@ -202,7 +203,8 @@ export async function addRoomSubmission(
       score,
       // No final score yet — it stays undefined until the video is analyzed, so
       // the admin shows "scoring…" rather than the text score prematurely. The
-      // composite (text*0.2 + video*0.8) is written once video analysis resolves.
+      // composite (see computeFinalScore in lib/scoring.ts) is written once
+      // video analysis resolves.
       timeTakenToPrompt,
       difficulty,
       timestamp: ts,
@@ -228,7 +230,7 @@ export async function updateRoomSubmissionWithVideoScore(
   videoScore: number,
   textScore: number
 ): Promise<RoomSubmission | null> {
-  const compositeScore = Math.round(textScore * 0.2 + videoScore * 0.8);
+  const compositeScore = computeFinalScore(textScore, videoScore)!;
   const name = playerName.trim();
   const updated = await blobUpdate<RoomSubmission[]>("rooms", "submissions", [], (current) => {
     const submission = current.find(
