@@ -66,6 +66,11 @@ export default function AdminPage() {
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Which scored player's breakdown card is shown (0 = winner); arrows browse.
+  const [breakdownIdx, setBreakdownIdx] = useState(0);
+  // New challenge → new round: snap the breakdown card back to the winner.
+  const activeChallengeIdForBreakdown = adminRooms[0]?.activeChallengeId ?? null;
+  useEffect(() => { setBreakdownIdx(0); }, [activeChallengeIdForBreakdown]);
 
   const passwordRef = useRef(password);
   useEffect(() => { passwordRef.current = password; }, [password]);
@@ -330,26 +335,61 @@ export default function AdminPage() {
                   )}
                 </div>
 
-                {/* Winner breakdown */}
+                {/* Player breakdown — arrows browse every scored player (0 = winner) */}
                 {(() => {
                   const rankings = buildRoundRankings(heroRoom);
-                  const winner = rankings[0];
-                  if (!winner || winner.finalScore === null || !winner.prompt) return null;
-                  const textScore = winner.score ?? 0;
-                  const videoScore = winner.videoScore;
-                  const finalScore = winner.compositeScore ?? textScore;
+                  // Only players whose final score has resolved and whose prompt we have.
+                  const scored = rankings.filter(e => e.finalScore !== null && e.prompt);
+                  if (scored.length === 0) return null;
+                  // Clamp: the list live-refreshes every 3s and can shrink between polls.
+                  const idx = Math.min(breakdownIdx, scored.length - 1);
+                  const entry = scored[idx];
+                  const rank = rankings.indexOf(entry); // true standings position
+                  const isWinner = rank === 0;
+                  const textScore = entry.score ?? 0;
+                  const videoScore = entry.videoScore;
+                  const finalScore = entry.compositeScore ?? textScore;
+                  const medal = rank < 3 ? ["🏆", "🥈", "🥉"][rank] : null;
                   return (
-                    <div className="flex-shrink-0 rounded-lg border border-yellow-500/30 bg-yellow-500/5 p-3 space-y-2">
-                      <div className="flex items-center gap-2">
-                        <span className="text-base leading-none">🏆</span>
-                        <div>
-                          <p className="text-[10px] uppercase font-bold tracking-wider text-yellow-500/70 font-mono">Winner Breakdown</p>
-                          <p className="text-sm font-bold text-yellow-200 font-mono leading-tight">{winner.playerName}</p>
+                    <div className={`flex-shrink-0 rounded-lg border p-3 space-y-2 ${
+                      isWinner ? "border-yellow-500/30 bg-yellow-500/5" : "border-zinc-700 bg-black/30"
+                    }`}>
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="text-base leading-none">{medal ?? <span className="text-[11px] font-mono font-bold text-zinc-500">#{rank + 1}</span>}</span>
+                          <div className="min-w-0">
+                            <p className={`text-[10px] uppercase font-bold tracking-wider font-mono ${isWinner ? "text-yellow-500/70" : "text-zinc-500"}`}>
+                              {isWinner ? "Winner Breakdown" : `#${rank + 1} Breakdown`}
+                            </p>
+                            <p className={`text-sm font-bold font-mono leading-tight truncate ${isWinner ? "text-yellow-200" : "text-white"}`}>
+                              {entry.playerName}
+                            </p>
+                          </div>
+                        </div>
+                        {/* Prev / next player arrows */}
+                        <div className="flex items-center gap-1 flex-shrink-0">
+                          <button
+                            onClick={() => setBreakdownIdx(Math.max(0, idx - 1))}
+                            disabled={idx === 0}
+                            title="Previous player"
+                            className="h-6 w-6 flex items-center justify-center rounded border border-zinc-700 bg-zinc-900/80 text-zinc-300 hover:text-white hover:border-zinc-500 transition disabled:opacity-30 disabled:cursor-not-allowed"
+                          >
+                            <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="15 18 9 12 15 6" /></svg>
+                          </button>
+                          <span className="text-[10px] font-mono text-zinc-500 px-0.5 select-none">{idx + 1}/{scored.length}</span>
+                          <button
+                            onClick={() => setBreakdownIdx(Math.min(scored.length - 1, idx + 1))}
+                            disabled={idx >= scored.length - 1}
+                            title="Next player"
+                            className="h-6 w-6 flex items-center justify-center rounded border border-zinc-700 bg-zinc-900/80 text-zinc-300 hover:text-white hover:border-zinc-500 transition disabled:opacity-30 disabled:cursor-not-allowed"
+                          >
+                            <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="9 18 15 12 9 6" /></svg>
+                          </button>
                         </div>
                       </div>
                       <div className="rounded border border-zinc-800 bg-black/40 px-2.5 py-2">
                         <p className="text-[10px] uppercase font-bold text-zinc-500 font-mono mb-1">Their Prompt</p>
-                        <p className="text-xs text-zinc-200 font-mono leading-relaxed italic">"{winner.prompt}"</p>
+                        <p className="text-xs text-zinc-200 font-mono leading-relaxed italic">"{entry.prompt}"</p>
                       </div>
                       <div className="grid grid-cols-3 gap-1.5">
                         <div className="rounded border border-zinc-800 bg-black/40 px-2 py-1.5 text-center">
@@ -362,14 +402,14 @@ export default function AdminPage() {
                             {videoScore != null ? `${videoScore}%` : "—"}
                           </p>
                         </div>
-                        <div className="rounded border border-yellow-500/30 bg-yellow-500/8 px-2 py-1.5 text-center">
-                          <p className="text-[9px] uppercase font-bold text-yellow-600 font-mono leading-tight">Final</p>
-                          <p className="text-sm font-bold text-yellow-300 font-mono">{finalScore}%</p>
+                        <div className={`rounded border px-2 py-1.5 text-center ${isWinner ? "border-yellow-500/30 bg-yellow-500/8" : "border-[#0066FF]/30 bg-[#0066FF]/10"}`}>
+                          <p className={`text-[9px] uppercase font-bold font-mono leading-tight ${isWinner ? "text-yellow-600" : "text-[#0066FF]"}`}>Final</p>
+                          <p className={`text-sm font-bold font-mono ${isWinner ? "text-yellow-300" : "text-white"}`}>{finalScore}%</p>
                         </div>
                       </div>
                       <div className="flex items-center justify-between">
                         <p className="text-[10px] text-zinc-500 font-mono truncate">{heroRoom.challengeDetails?.theme}</p>
-                        <p className="text-xs font-bold text-yellow-300 font-mono">{winner.finalScore} final</p>
+                        <p className={`text-xs font-bold font-mono ${isWinner ? "text-yellow-300" : "text-white"}`}>{entry.finalScore} final</p>
                       </div>
                     </div>
                   );
