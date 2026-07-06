@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getPromptById } from "@/lib/booth-prompts";
-import { extractFrames, scoreVideoSimilarity } from "@/lib/video-analysis";
+import { analyzeVideoSimilarity } from "@/lib/video-analysis";
 import { updateRoomSubmissionWithVideoScore, markRoomSubmissionVideoUnavailable } from "@/lib/rooms";
+import { logEvent } from "@/lib/event-log";
 
 // Allow up to 60 s on Netlify (default is 10 s, which isn't enough for
 // frame extraction + vision scoring + blob update).
@@ -41,35 +42,35 @@ export async function POST(req: NextRequest) {
     const challenge = getPromptById(challengeId);
     if (!challenge) {
       if (roomId) await markRoomSubmissionVideoUnavailable(roomId, playerName);
+      await logEvent({
+        type: "video_similarity", status: "error", playerName, roomId, challengeId,
+        durationMs: Date.now() - startTime, error: "Challenge not found",
+      });
       return NextResponse.json({ error: "Challenge not found", compositeScore: textScore, videoScore: null }, { status: 200 });
     }
 
     // Absolute HTTPS URL so ffmpeg can fetch it in the serverless function.
     const referenceVideoUrl = `${resolveOrigin(req)}/videos/${challenge.id}.mp4`;
 
-    // Stage 1: extract frames
-    let referenceFrames: Buffer[], userFrames: Buffer[];
+    // Stage 1+2: embed & score. Primary path sends the FULL videos to
+    // gemini-embedding-2 (one vector per video); if that hasn't finished
+    // within 30s (its latency can spike unpredictably) it falls back to
+    // 16-frame sampling automatically inside analyzeVideoSimilarity.
+    let videoScore: number, vFeedback: string, method: string, framesProcessed: number;
     try {
-      [referenceFrames, userFrames] = await Promise.all([
-        extractFrames(referenceVideoUrl, 4),
-        extractFrames(userVideoUrl, 4),
-      ]);
+      ({ score: videoScore, feedback: vFeedback, method, framesProcessed } =
+        await analyzeVideoSimilarity(referenceVideoUrl, userVideoUrl));
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      console.error("[video-similarity] frame extraction failed:", message);
+      console.error("[video-similarity] analysis failed:", message);
       if (roomId) await markRoomSubmissionVideoUnavailable(roomId, playerName);
-      return NextResponse.json({ error: message, stage: "frame_extraction", videoScore: null, compositeScore: textScore }, { status: 200 });
-    }
-
-    // Stage 2: score with the vision model
-    let videoScore: number, vFeedback: string;
-    try {
-      ({ score: videoScore, feedback: vFeedback } = await scoreVideoSimilarity(referenceFrames, userFrames));
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.error("[video-similarity] vision scoring failed:", message);
-      if (roomId) await markRoomSubmissionVideoUnavailable(roomId, playerName);
-      return NextResponse.json({ error: message, stage: "vision_scoring", videoScore: null, compositeScore: textScore }, { status: 200 });
+      await logEvent({
+        type: "video_similarity", status: "error", playerName, roomId, challengeId,
+        durationMs: Date.now() - startTime,
+        detail: { stage: "video_analysis", textScore },
+        error: message,
+      });
+      return NextResponse.json({ error: message, stage: "video_analysis", videoScore: null, compositeScore: textScore }, { status: 200 });
     }
 
     const compositeScore = Math.round(textScore * 0.2 + videoScore * 0.8);
@@ -83,16 +84,29 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    await logEvent({
+      type: "video_similarity", status: "ok", playerName, roomId, challengeId,
+      durationMs: Date.now() - startTime,
+      detail: { method, framesProcessed, videoScore, textScore, compositeScore },
+    });
+
     return NextResponse.json({
       videoScore,
       compositeScore,
       feedback: vFeedback,
-      framesProcessed: referenceFrames.length,
+      method,
+      framesProcessed,
       executionMs: Date.now() - startTime,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("[video-similarity] unexpected error:", message);
+    await logEvent({
+      type: "video_similarity", status: "error",
+      durationMs: Date.now() - startTime,
+      detail: { stage: "unexpected" },
+      error: message,
+    });
     return NextResponse.json({ error: message, videoScore: null, compositeScore: null }, { status: 500 });
   }
 }

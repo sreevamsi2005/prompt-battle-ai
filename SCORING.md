@@ -25,10 +25,13 @@ An LLM compares the player's prompt to the challenge's original prompt and retur
 `{ score: 0–100, feedback }`. The `feedback` becomes the "Prompt" remark on results.
 
 ## 2. Video similarity — `app/api/video-similarity/route.ts` + `lib/video-analysis.ts`
-After the player's video generates (fal.ai), we extract 4 frames each from the
-reference and the player's video, embed them with Google `gemini-embedding-2`
-(mean-pooled into one vector per video), and take the cosine similarity → a
-`{ score: 0–100, feedback }`. The cosine is mapped to a score with a strict floor:
+After the player's video generates (fal.ai), both COMPLETE videos (reference +
+player's) are sent directly to Google `gemini-embedding-2`, producing one vector
+per video, and the cosine similarity between them → `{ score: 0–100, feedback }`.
+If the full-video path hasn't finished within **30 seconds** (its latency can
+spike unpredictably), it automatically falls back to extracting **16 frames** per
+video, embedding them in one batch, and mean-pooling into a video vector.
+The cosine is mapped to a score with a strict floor:
 
 ```
 if cosine <= 0.75:  score = 0
