@@ -3,6 +3,7 @@ import { loadLeaderboard, addEntry, clearLeaderboard } from "@/lib/server-leader
 import { addRoomSubmission, loadRoomSubmissions } from "@/lib/rooms";
 import { appendDataSheetRow } from "@/lib/csv-export";
 import { isAdminPasswordValid } from "@/lib/admin-auth";
+import { logEvent } from "@/lib/event-log";
 
 export async function GET(req: NextRequest) {
   const roomId = req.nextUrl.searchParams.get("roomId");
@@ -97,14 +98,35 @@ export async function POST(req: NextRequest) {
         }).catch(err => console.error("[data-sheet] append failed:", err));
       }
 
+      await logEvent({
+        type: "submission_room", status: "ok",
+        playerName: playerName.trim(), roomId, challengeId,
+        detail: {
+          textScore: similarityScore, timeTakenToPrompt: safeTime,
+          ...(autoSubmitted ? { autoSubmitted: true } : {}),
+        },
+      });
       return NextResponse.json(subs);
     }
 
     const entries = await addEntry(playerName, similarityScore, safeTime, email, compositeScore, videoScore);
+    await logEvent({
+      type: "submission_global", status: "ok", playerName: playerName.trim(),
+      detail: {
+        textScore: similarityScore,
+        ...(videoScore != null ? { videoScore } : {}),
+        finalScore,
+        timeTakenToPrompt: safeTime,
+      },
+    });
     return NextResponse.json(entries);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("Leaderboard API error:", message);
+    await logEvent({
+      type: "submission_room", status: "error",
+      error: `Failed to save score: ${message}`,
+    });
     return NextResponse.json(
       { error: `Failed to save score: ${message}` },
       { status: 500 }

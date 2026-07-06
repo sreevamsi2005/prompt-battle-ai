@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import OpenAI from "openai";
 import { mockScore } from "@/lib/mock-score";
 import { getPromptById } from "@/lib/booth-prompts";
+import { logEvent } from "@/lib/event-log";
 
 const SCORE_PROMPT = `Compare these two prompts semantically and return JSON only with this exact shape:
 {"score": <number 0-100>, "feedback": "<short cinematic feedback, max 2 sentences>"}
@@ -19,10 +20,12 @@ User Prompt:
 {user}`;
 
 export async function POST(request: NextRequest) {
+  const startTime = Date.now();
   const body = await request.json();
-  const { challengeId, userPrompt } = body as {
+  const { challengeId, userPrompt, playerName } = body as {
     challengeId?: string;
     userPrompt?: string;
+    playerName?: string;
   };
 
   if (!challengeId || !userPrompt?.trim()) {
@@ -34,21 +37,39 @@ export async function POST(request: NextRequest) {
 
   const booth = getPromptById(challengeId);
   if (!booth) {
+    await logEvent({
+      type: "text_score", status: "error", playerName, challengeId,
+      durationMs: Date.now() - startTime, error: "Unknown challenge",
+    });
     return NextResponse.json({ error: "Unknown challenge" }, { status: 404 });
   }
 
   const originalPrompt = booth.prompt;
+  // Records which engine produced the score + how long it took, for the logs.
+  const logScore = (scorer: string, score: number, error?: string) =>
+    logEvent({
+      type: "text_score",
+      status: error ? "error" : "ok",
+      playerName,
+      challengeId,
+      durationMs: Date.now() - startTime,
+      detail: { scorer, score, promptChars: userPrompt.trim().length },
+      ...(error ? { error } : {}),
+    });
 
   try {
     const apiKey = process.env.OPENAI_API_KEY;
     const geminiKey = process.env.GEMINI_API_KEY;
 
     if (!apiKey && !geminiKey) {
-      return NextResponse.json(mockScore(originalPrompt, userPrompt));
+      const result = mockScore(originalPrompt, userPrompt);
+      await logScore("mock (no API keys)", result.score);
+      return NextResponse.json(result);
     }
 
     if (geminiKey && !apiKey) {
       const result = await scoreWithGemini(geminiKey, originalPrompt, userPrompt);
+      await logScore("gemini-2.0-flash", result.score);
       return NextResponse.json(result);
     }
 
@@ -74,10 +95,16 @@ export async function POST(request: NextRequest) {
     });
 
     const content = completion.choices[0]?.message?.content;
-    return NextResponse.json(parseScoreResponse(content));
+    const result = parseScoreResponse(content);
+    await logScore(process.env.OPENAI_MODEL ?? "gpt-4o-mini", result.score);
+    return NextResponse.json(result);
   } catch (error) {
     console.error("Score API error:", error);
-    return NextResponse.json(mockScore(originalPrompt, userPrompt));
+    // Model call failed → mock fallback keeps the game going; log both facts.
+    const result = mockScore(originalPrompt, userPrompt);
+    await logScore("mock (fallback after error)", result.score,
+      error instanceof Error ? error.message : String(error));
+    return NextResponse.json(result);
   }
 }
 

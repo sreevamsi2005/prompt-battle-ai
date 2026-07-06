@@ -722,7 +722,7 @@ export default function PlayPage() {
       const scoreRes = await fetch("/api/score", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ challengeId: challenge.challengeId, userPrompt: prompt.trim() }),
+        body: JSON.stringify({ challengeId: challenge.challengeId, userPrompt: prompt.trim(), playerName: name }),
       });
       const scoreData = (await scoreRes.json()) as ScoreResult;
       if (!scoreRes.ok) throw new Error(formatApiError(scoreData as any, "Scoring failed."));
@@ -790,7 +790,7 @@ export default function PlayPage() {
       const genRes = await fetch("/api/generate-prompt", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userPrompt: prompt.trim() }),
+        body: JSON.stringify({ userPrompt: prompt.trim(), playerName: name }),
       });
       const genData = await genRes.json();
 

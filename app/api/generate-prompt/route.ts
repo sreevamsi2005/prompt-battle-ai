@@ -1,11 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fal } from "@fal-ai/client";
+import { logEvent } from "@/lib/event-log";
 
 fal.config({ credentials: process.env.FAL_KEY });
 
 const MODEL = "fal-ai/vidu/q3/text-to-video/turbo";
 
 export async function POST(req: NextRequest) {
+  const startTime = Date.now();
+
   if (!process.env.FAL_KEY) {
     // No key configured — caller should skip video generation (expected, not an error).
     return NextResponse.json({ requestId: null, skipped: true });
@@ -13,9 +16,11 @@ export async function POST(req: NextRequest) {
 
   // Stage: parse + validate the request body.
   let userPrompt: string;
+  let playerName: string | undefined;
   try {
     const body = await req.json();
-    const p = (body as { userPrompt?: string }).userPrompt;
+    const p = (body as { userPrompt?: string; playerName?: string }).userPrompt;
+    playerName = (body as { playerName?: string }).playerName;
     if (!p?.trim()) {
       return NextResponse.json(
         { error: "Prompt is empty.", stage: "request" },
@@ -42,6 +47,13 @@ export async function POST(req: NextRequest) {
         audio: false,
       },
     });
+    // The matching video_gen_completed/failed event computes total generation
+    // time from this event's timestamp.
+    await logEvent({
+      type: "video_gen_queued", status: "ok", playerName, requestId: request_id,
+      durationMs: Date.now() - startTime,
+      detail: { model: MODEL, promptChars: userPrompt.length },
+    });
     return NextResponse.json({ requestId: request_id });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -54,6 +66,12 @@ export async function POST(req: NextRequest) {
         : status === 429
         ? "fal.ai rate limit or quota reached"
         : `fal.ai queue rejected the job${status ? ` (HTTP ${status})` : ""}`;
+    await logEvent({
+      type: "video_gen_failed", status: "error", playerName,
+      durationMs: Date.now() - startTime,
+      detail: { stage: "queue_submit", httpStatus: status ?? null },
+      error: `${reason}: ${message}`,
+    });
     return NextResponse.json(
       { error: `${reason}: ${message}`, stage: "queue_submit" },
       { status: 502 }

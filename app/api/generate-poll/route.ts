@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { fal } from "@fal-ai/client";
 import { setCachedVideo } from "@/lib/video-cache";
 import { downloadVideoInBackground } from "@/lib/download-video";
+import { logVideoGenTerminal } from "@/lib/event-log";
 
 fal.config({ credentials: process.env.FAL_KEY });
 
@@ -34,6 +35,7 @@ export async function GET(req: NextRequest) {
     const raw = (status as any).error;
     const detail = typeof raw === "string" ? raw : raw?.message ?? `Job ${state.toLowerCase()} on fal.ai`;
     console.error(`fal.ai job ${state}:`, detail, "requestId:", requestId);
+    await logVideoGenTerminal(requestId, "failed", { stage: "generation", falState: state }, detail);
     return NextResponse.json({ status: "FAILED", error: `fal.ai could not generate the video: ${detail}`, stage: "generation" });
   }
 
@@ -50,6 +52,7 @@ export async function GET(req: NextRequest) {
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("fal.ai result fetch failed:", message, "requestId:", requestId);
+    await logVideoGenTerminal(requestId, "failed", { stage: "fetch_result" }, message);
     return NextResponse.json({ status: "FAILED", error: `Could not download the result from fal.ai: ${message}`, stage: "fetch_result" });
   }
 
@@ -63,12 +66,16 @@ export async function GET(req: NextRequest) {
   if (!videoUrl) {
     const shape = JSON.stringify(output ?? {}).slice(0, 200);
     console.error("Unexpected fal.ai result shape:", shape);
+    await logVideoGenTerminal(requestId, "failed", { stage: "no_video", resultShape: shape }, "fal.ai returned no video URL");
     return NextResponse.json({ status: "FAILED", error: "fal.ai returned no video URL.", stage: "no_video" });
   }
 
   const generatedId = `user-${Date.now()}`;
   setCachedVideo(generatedId, videoUrl);
   downloadVideoInBackground(generatedId, videoUrl);
+
+  // durationMs (queue→complete) is computed inside from the queued event.
+  await logVideoGenTerminal(requestId, "completed", { videoUrl });
 
   return NextResponse.json({ status: "COMPLETED", videoUrl });
 }

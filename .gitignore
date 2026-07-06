@@ -49,6 +49,8 @@ next-env.d.ts
 /data/room-submissions.json
 /data/data-sheet-rows.json
 /data/rooms-replay-requests.json
+# local event-log store (Netlify Blobs in production)
+/data/logs-events.json
 
 # local agent / editor state
 /.claude/
