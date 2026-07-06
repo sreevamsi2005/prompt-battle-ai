@@ -641,13 +641,7 @@ export default function AdminPage() {
               {promptsList.map(p => (
                 <div key={p.id} className="flex flex-col rounded-lg border border-zinc-800 bg-black overflow-hidden group">
                   <div className="relative aspect-video bg-zinc-950 overflow-hidden">
-                    <video
-                      src={`/videos/${p.id}.mp4`}
-                      muted playsInline loop preload="none"
-                      onMouseEnter={e => (e.currentTarget as HTMLVideoElement).play().catch(() => {})}
-                      onMouseLeave={e => { const v = e.currentTarget as HTMLVideoElement; v.pause(); v.currentTime = 0; }}
-                      className="w-full h-full object-cover"
-                    />
+                    <LiveVideo src={`/videos/${p.id}.mp4`} />
                   </div>
                   <div className="p-2 flex flex-col gap-2 flex-1">
                     <div>
@@ -672,7 +666,7 @@ export default function AdminPage() {
                 </div>
               ))}
             </div>
-            <p className="mt-3 text-[10px] text-zinc-600 font-mono">Hover a video to preview · Click to set as live challenge</p>
+            <p className="mt-3 text-[10px] text-zinc-600 font-mono">Videos play automatically · Click to set as live challenge</p>
           </div>
         )}
 
