@@ -70,5 +70,41 @@
     "prompt": "A massive towering sandstorm wall engulfing an abandoned desert town at dusk, swirling ochre dust, dramatic backlight, intense apocalyptic cinematic scale",
     "difficulty": "hard",
     "theme": "Storm & Sand"
+  },
+  {
+    "id": "cherry-blossom",
+    "prompt": "Aerial glide over a river lined with full-bloom cherry blossom trees, soft pink petals drifting in the breeze, golden afternoon light, tranquil cinematic wide shot",
+    "difficulty": "easy",
+    "theme": "Bloom & Calm"
+  },
+  {
+    "id": "arctic-fox",
+    "prompt": "A silver arctic fox darting playfully across a vast frozen tundra under a deep blue polar sky, crisp breath mist, ultra-wide slow motion, cinematic nature documentary",
+    "difficulty": "medium",
+    "theme": "Frozen Wild"
+  },
+  {
+    "id": "floating-market",
+    "prompt": "A vibrant Thai floating market at dawn, wooden boats loaded with exotic fruits and flowers drifting through still canal water, warm golden light, immersive cinematic",
+    "difficulty": "medium",
+    "theme": "Market Dawn"
+  },
+  {
+    "id": "lightning-storm",
+    "prompt": "A massive electrical storm over an open plains landscape at night, thousands of lightning bolts illuminating dark thunderclouds, time-lapse feel, epic wide cinematic shot",
+    "difficulty": "hard",
+    "theme": "Storm & Power"
+  },
+  {
+    "id": "ancient-ruins",
+    "prompt": "A lone explorer with a torch walking through moonlit stone corridors of a massive ancient Mayan temple deep in jungle, mist swirling around carved walls, atmospheric cinematic",
+    "difficulty": "hard",
+    "theme": "Lost Temple"
+  },
+  {
+    "id": "mountain-sunrise",
+    "prompt": "A time-lapse sunrise over jagged snow-capped mountain peaks, dramatic warm golden light washing over the range, vibrant orange and pink sky, cinematic IMAX wide shot",
+    "difficulty": "easy",
+    "theme": "Peaks & Light"
   }
 ]
