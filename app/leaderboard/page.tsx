@@ -44,7 +44,7 @@ export default function LeaderboardPage() {
   }, []);
 
   return (
-    <div className="relative min-h-[calc(100vh-3.5rem)] py-10">
+    <div className="relative min-h-[calc(100vh-4rem)] py-10">
       <div className="mx-auto max-w-3xl px-4">
 
         {/* Header section */}

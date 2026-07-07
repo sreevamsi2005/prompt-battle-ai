@@ -33,7 +33,7 @@ export default function RootLayout({
       <body className="grid-bg min-h-full font-sans">
         <AdminAuthProvider>
           <Navbar />
-          <main className="pt-14">{children}</main>
+          <main className="pt-16">{children}</main>
         </AdminAuthProvider>
       </body>
     </html>

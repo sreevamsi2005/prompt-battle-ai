@@ -187,7 +187,7 @@ export default function AdminPage() {
   // ── LOGIN ───────────────────────────────────────────────────────────────────
   if (!authenticated) {
     return (
-      <div className="relative min-h-[calc(100vh-3.5rem)] flex items-center justify-center py-12 px-4 sm:px-6">
+      <div className="relative min-h-[calc(100vh-4rem)] flex items-center justify-center py-12 px-4 sm:px-6">
         <div className="w-full max-w-sm">
           <motion.div initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} className="graphite-card p-6">
             <h1 className="text-base font-bold text-white tracking-tight">Admin Passcode</h1>
@@ -251,7 +251,7 @@ export default function AdminPage() {
     <div className="relative">
 
       {/* ── HERO: fills viewport below navbar ────────────────────────────── */}
-      <section className="h-[calc(100vh-3.5rem)] px-4 py-3 overflow-hidden flex flex-col">
+      <section className="h-[calc(100vh-4rem)] px-4 py-3 overflow-hidden flex flex-col">
         <div className="mx-auto w-full max-w-6xl flex-1 flex flex-col gap-3 min-h-0">
 
           {/* Main hero content */}

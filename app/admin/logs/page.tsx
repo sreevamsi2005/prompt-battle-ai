@@ -131,7 +131,7 @@ export default function AdminLogsPage() {
 
   if (!authed) {
     return (
-      <div className="min-h-[calc(100vh-3.5rem)] flex items-center justify-center px-4">
+      <div className="min-h-[calc(100vh-4rem)] flex items-center justify-center px-4">
         <div className="graphite-card p-6 w-full max-w-sm">
           <h1 className="text-lg font-bold text-white">Booth Logs</h1>
           <p className="mt-1 text-xs text-zinc-500">Enter the admin password to view request logs.</p>

@@ -1251,7 +1251,7 @@ export default function PlayPage() {
   };
 
   return (
-    <div className="relative min-h-[calc(100vh-3.5rem)] flex flex-col justify-between overflow-hidden">
+    <div className="relative min-h-[calc(100vh-4rem)] flex flex-col justify-between overflow-hidden">
 
       {/* Last-10s urgency: pulsing red vignette over the whole screen */}
       {phase === "playing" && timeLeft !== null && timeLeft <= 10 && (
