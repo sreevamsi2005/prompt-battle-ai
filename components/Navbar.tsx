@@ -24,18 +24,16 @@ export default function Navbar() {
     >
       <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-4 sm:px-6">
         <div className="flex items-center gap-6">
-          <Link href="/" className="group flex items-center gap-2.5">
-            <motion.span
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.98 }}
-              className="relative flex h-7 w-7 items-center justify-center rounded bg-white text-xs font-bold text-black"
-            >
-              PB
-              <span className="absolute -bottom-0.5 -right-0.5 h-1.5 w-1.5 rounded-full bg-[#0066FF] border border-black" />
+          <Link href="/" className="group flex items-center">
+            <motion.span whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.98 }} className="flex items-center">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src="https://imgcdn.analyticsvidhya.com/dhs/av_dhs_logo.svg"
+                alt="Analytics Vidhya DataHack Summit"
+                style={{ aspectRatio: "360 / 68", height: 30 }}
+                className="max-w-none flex-shrink-0"
+              />
             </motion.span>
-            <span className="text-sm font-semibold tracking-tight text-white transition-colors group-hover:text-zinc-300">
-              PromptBattle <span className="text-zinc-500 font-normal font-mono text-xs">AI</span>
-            </span>
           </Link>
 
           <div className="hidden sm:flex items-center gap-1.5">
@@ -63,7 +61,17 @@ export default function Navbar() {
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 sm:gap-4">
+          {/* Analytics Vidhya x DataHack Summit co-brand mark */}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="https://imgcdn.analyticsvidhya.com/dhs/av_dhs_logo.svg"
+            alt="Analytics Vidhya DataHack Summit"
+            width={360}
+            height={68}
+            className="hidden sm:block h-5 w-auto sm:h-6"
+          />
+
           {/* Mobile visible links */}
           <div className="flex sm:hidden items-center gap-1">
             {links.map((link) => {

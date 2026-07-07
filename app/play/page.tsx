@@ -316,6 +316,341 @@ function ChallengeTimer({ seconds }: { seconds: number | null }) {
   );
 }
 
+/* ─── Round resolution (standings gating) ────────────────────────────────
+ * Standings must only be shown once EVERY present player's final (composite)
+ * score has resolved — ranking as soon as one player finishes previously made
+ * the "winner" flicker as later players caught up. Two escape hatches stop
+ * this from hanging forever: a submission whose video never resolves falls
+ * back to its text score after ANALYSIS_TIMEOUT_MS (mirrors the admin panel),
+ * and a player who never actually submits a prompt stops blocking everyone
+ * else after NO_SUBMIT_GRACE_MS. */
+const ANALYSIS_TIMEOUT_MS = 180_000;
+const NO_SUBMIT_GRACE_MS = 90_000;
+
+interface RoundEntry {
+  playerName: string;
+  finalScore: number;
+  timeTakenToPrompt: number;
+}
+
+function evaluateRound(roomState: RoomState): {
+  resolved: boolean;
+  finishedCount: number;
+  totalCount: number;
+  ranked: RoundEntry[];
+} {
+  const players = roomState.players ?? [];
+  const subs = roomState.submissions ?? [];
+  const now = Date.now();
+
+  const finalOf = (s: { compositeScore?: number; score: number; timestamp: number }) => {
+    if (s.compositeScore != null) return s.compositeScore;
+    if (now - s.timestamp > ANALYSIS_TIMEOUT_MS) return s.score;
+    return null;
+  };
+
+  let resolved = subs.length > 0;
+  for (const p of players) {
+    const sub = subs.find((s) => s.playerName.toLowerCase() === p.playerName.toLowerCase());
+    if (!sub) {
+      if (!roomState.battleStartedAt || now - roomState.battleStartedAt < NO_SUBMIT_GRACE_MS) resolved = false;
+      continue;
+    }
+    if (finalOf(sub) == null) resolved = false;
+  }
+
+  const ranked = subs
+    .map((s) => ({ playerName: s.playerName, finalScore: finalOf(s), timeTakenToPrompt: s.timeTakenToPrompt }))
+    .filter((s): s is RoundEntry => s.finalScore != null)
+    .sort((a, b) => (b.finalScore - a.finalScore) || (a.timeTakenToPrompt - b.timeTakenToPrompt));
+
+  return { resolved, finishedCount: ranked.length, totalCount: Math.max(players.length, subs.length), ranked };
+}
+
+/* ─── Winner celebration burst ───────────────────────────────────────────── */
+function ConfettiBurst({ triggerKey }: { triggerKey: number }) {
+  const [particles, setParticles] = useState<
+    { id: number; x: number; y: number; rotate: number; color: string; w: number; h: number; delay: number }[]
+  >([]);
+
+  useEffect(() => {
+    if (triggerKey === 0) return;
+    const colors = ["#FBBF24", "#0066FF", "#FB7185", "#34D399", "#F5F5F5", "#A78BFA"];
+    const next = Array.from({ length: 90 }, (_, i) => {
+      const angle = Math.random() * Math.PI * 2;
+      const distance = 140 + Math.random() * 340;
+      return {
+        id: i,
+        x: Math.cos(angle) * distance,
+        y: Math.sin(angle) * distance - 90,
+        rotate: Math.random() * 720 - 360,
+        color: colors[i % colors.length],
+        w: 5 + Math.random() * 6,
+        h: 10 + Math.random() * 9,
+        delay: Math.random() * 0.2,
+      };
+    });
+    setParticles(next);
+    const t = setTimeout(() => setParticles([]), 2600);
+    return () => clearTimeout(t);
+  }, [triggerKey]);
+
+  if (particles.length === 0) return null;
+  return (
+    <div className="pointer-events-none fixed inset-0 z-[70] flex items-start justify-center overflow-hidden">
+      <div className="relative top-[28%]">
+        {particles.map((p) => (
+          <motion.span
+            key={p.id}
+            initial={{ x: 0, y: 0, opacity: 1, rotate: 0 }}
+            animate={{ x: p.x, y: p.y, opacity: 0, rotate: p.rotate }}
+            transition={{ duration: 1.8, delay: p.delay, ease: [0.16, 1, 0.3, 1] }}
+            style={{ position: "absolute", width: p.w, height: p.h, backgroundColor: p.color, borderRadius: 2 }}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ─── Personal final-score circle (top-left) ─────────────────────────────── */
+function MyScoreCard({
+  finalScore, headline, subtext, amWinner,
+}: { finalScore: number | null; headline: string; subtext: string; amWinner: boolean }) {
+  return (
+    <div
+      className={`graphite-card p-5 flex flex-col items-center text-center gap-2.5 ${
+        amWinner ? "border-yellow-400/50 shadow-[0_0_34px_-10px_rgba(250,204,21,0.5)]" : ""
+      }`}
+    >
+      {amWinner && (
+        <motion.div
+          animate={{ y: [0, -4, 0] }}
+          transition={{ duration: 2.4, repeat: Infinity, ease: "easeInOut" }}
+          className="text-3xl leading-none"
+        >
+          🏆
+        </motion.div>
+      )}
+      <div className={finalScore == null ? "relative h-28 w-40 flex flex-col items-center justify-center" : "relative h-32 w-32 flex items-center justify-center"}>
+        {finalScore == null ? (
+          <>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/animations/sandy-loading.svg" alt="" className="h-24 w-40 object-contain" />
+            <motion.span
+              className="text-[9px] uppercase tracking-wider text-[#0066FF] font-mono font-bold mt-0.5"
+              animate={{ opacity: [0.4, 1, 0.4] }}
+              transition={{ duration: 1.4, repeat: Infinity }}
+            >
+              analyzing…
+            </motion.span>
+          </>
+        ) : (
+          <>
+            <svg className="h-32 w-32 -rotate-90" viewBox="0 0 36 36">
+              <circle cx="18" cy="18" r="16" fill="none" stroke="#27272a" strokeWidth="2.5" />
+              <motion.circle
+                cx="18" cy="18" r="16" fill="none"
+                stroke={amWinner ? "#FBBF24" : "#0066FF"}
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                initial={{ strokeDasharray: "0 100" }}
+                animate={{ strokeDasharray: `${finalScore} 100` }}
+                transition={{ duration: 1.2, ease: "easeOut" }}
+              />
+            </svg>
+            <div className="absolute flex flex-col items-center">
+              <motion.span
+                initial={{ scale: 0.5, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                transition={{ type: "spring", stiffness: 260, damping: 16 }}
+                className={`text-4xl font-extrabold font-mono leading-none ${amWinner ? "text-yellow-300" : "text-white"}`}
+              >
+                {finalScore}
+              </motion.span>
+              <span className={`text-[9px] uppercase tracking-wider font-mono mt-1 ${amWinner ? "text-yellow-400" : "text-[#0066FF]"}`}>
+                Final Score
+              </span>
+            </div>
+          </>
+        )}
+      </div>
+      <div>
+        <p className="text-sm sm:text-base font-bold text-white leading-snug">{headline}</p>
+        <p className="mt-1 text-[11px] text-zinc-500 font-mono">{subtext}</p>
+      </div>
+    </div>
+  );
+}
+
+/* ─── Battle standings (top-right) ───────────────────────────────────────── */
+// Rank-specific "riser" material: a light top edge fading through a base tone
+// into a darker shadowed base — this gradient is what makes the block read as
+// an extruded 3D pedestal rather than a flat rectangle.
+const PODIUM_PALETTE = [
+  { top: "#FFF6D2", base: "#F5C518", mid: "#D9A70B", dark: "#7A5900", ring: "border-yellow-300/60", glow: "shadow-[0_20px_44px_-14px_rgba(250,204,21,0.6)]", text: "text-yellow-100" },
+  { top: "#F4F6F8", base: "#C7CDD6", mid: "#9AA2AD", dark: "#4B525C", ring: "border-zinc-300/50", glow: "shadow-[0_16px_34px_-14px_rgba(200,205,214,0.4)]", text: "text-zinc-50" },
+  { top: "#F3D3AE", base: "#D08A4C", mid: "#B06B33", dark: "#5E3216", ring: "border-orange-300/50", glow: "shadow-[0_16px_34px_-14px_rgba(208,138,76,0.45)]", text: "text-orange-100" },
+];
+const PODIUM_HEIGHTS = [148, 106, 82]; // 1st, 2nd, 3rd — tallest center riser reads as top rank
+
+function PodiumBlock({ entry, rank, isMe }: { entry: RoundEntry; rank: number; isMe: boolean }) {
+  const p = PODIUM_PALETTE[rank];
+  const isWinner = rank === 0;
+
+  return (
+    <div className="flex flex-col items-center flex-1 min-w-0 max-w-[130px]">
+      {/* Trophy on the winner, medal glyph for 2nd/3rd */}
+      <div className="h-9 flex items-end justify-center mb-1">
+        {isWinner ? (
+          <motion.span
+            animate={{ y: [0, -5, 0], rotate: [-5, 5, -5] }}
+            transition={{ duration: 2.4, repeat: Infinity, ease: "easeInOut" }}
+            className="text-3xl drop-shadow-[0_6px_12px_rgba(250,204,21,0.65)]"
+          >
+            🏆
+          </motion.span>
+        ) : (
+          <span className="text-lg opacity-85">{rank === 1 ? "🥈" : "🥉"}</span>
+        )}
+      </div>
+
+      {/* Name — flips into place with an embossed 3D text treatment */}
+      <div style={{ perspective: 500 }} className="max-w-full px-1">
+        <motion.p
+          initial={{ opacity: 0, rotateX: -85, y: 10 }}
+          animate={{ opacity: 1, rotateX: 0, y: 0 }}
+          transition={{ type: "spring", stiffness: 210, damping: 17, delay: rank * 0.12 }}
+          style={{
+            transformStyle: "preserve-3d",
+            textShadow: isMe
+              ? "1px 1px 0 rgba(0,70,200,0.6), 2px 2px 4px rgba(0,0,0,0.4)"
+              : `1px 1px 0 ${p.mid}, 2px 2px 0 ${p.dark}, 3px 3px 5px rgba(0,0,0,0.45)`,
+          }}
+          className={`font-mono font-extrabold truncate text-center leading-tight ${isWinner ? "text-lg" : "text-sm"} ${isMe ? "text-[#4d94ff]" : p.text}`}
+        >
+          {entry.playerName}
+        </motion.p>
+      </div>
+      {isMe && <span className="text-[9px] font-bold text-[#0066FF]/80 leading-none mt-0.5">(YOU)</span>}
+
+      {/* Score */}
+      <p className={`font-mono font-extrabold tabular-nums mt-1 mb-2 ${isWinner ? "text-2xl" : "text-lg"} ${p.text}`}>
+        {entry.finalScore}
+      </p>
+
+      {/* The 3D riser — gradient face + glossy top cap + embossed rank numeral */}
+      <motion.div
+        initial={{ height: 0, opacity: 0 }}
+        animate={{ height: PODIUM_HEIGHTS[rank], opacity: 1 }}
+        transition={{ duration: 0.7, ease: [0.16, 1, 0.3, 1], delay: rank * 0.12 }}
+        className={`relative w-full rounded-t-lg border ${p.ring} ${p.glow} overflow-hidden`}
+        style={{ background: `linear-gradient(180deg, ${p.top} 0%, ${p.base} 24%, ${p.mid} 68%, ${p.dark} 100%)` }}
+      >
+        {/* glossy top-edge highlight — sells the "looking at a raised surface" illusion */}
+        <div className="absolute top-0 left-0 right-0 h-2.5" style={{ background: "linear-gradient(180deg, rgba(255,255,255,0.7), rgba(255,255,255,0))" }} />
+        {/* winner-only shine sweep for a premium/trophy-case feel */}
+        {isWinner && (
+          <motion.div
+            className="absolute inset-y-0 w-1/3"
+            style={{ background: "linear-gradient(115deg, transparent, rgba(255,255,255,0.4), transparent)" }}
+            animate={{ x: ["-140%", "240%"] }}
+            transition={{ duration: 2.8, repeat: Infinity, repeatDelay: 1.6, ease: "easeInOut" }}
+          />
+        )}
+        <div className="absolute inset-0 flex items-center justify-center">
+          <span className="text-3xl font-black font-mono" style={{ color: "rgba(0,0,0,0.3)" }}>{rank + 1}</span>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
+function StandingsCard({
+  ranked, resolved, finishedCount, totalCount, myName,
+}: { ranked: RoundEntry[]; resolved: boolean; finishedCount: number; totalCount: number; myName: string }) {
+  return (
+    <div className="graphite-card p-4 sm:p-5 flex flex-col min-h-[220px]">
+      <div className="flex items-center justify-between border-b border-zinc-900 pb-2.5 mb-3">
+        <h3 className="text-xs sm:text-sm font-bold text-white uppercase tracking-wider font-mono">Final Standings</h3>
+        {resolved ? (
+          <span className="flex items-center gap-1.5 text-[10px] text-emerald-400 font-mono font-bold uppercase">
+            <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+              <polyline points="20 6 9 17 4 12" />
+            </svg>
+            All Scored
+          </span>
+        ) : (
+          <span className="flex items-center gap-1.5 text-[10px] text-amber-400 font-mono font-bold uppercase">
+            <span className="h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse" />
+            {finishedCount}/{totalCount} scored
+          </span>
+        )}
+      </div>
+
+      {!resolved ? (
+        <div className="flex-1 flex flex-col items-center justify-center py-4 gap-1">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/animations/animation-spider.svg" alt="" className="h-24 w-24" />
+          <p className="text-xs sm:text-sm text-zinc-400 font-mono text-center leading-relaxed">
+            Waiting for every battle-mate to finish…
+            <br />
+            <span className="text-[10px] text-zinc-600">Standings lock in once all scores are final.</span>
+          </p>
+        </div>
+      ) : (
+        <div className="flex-1 flex flex-col justify-end">
+          {/* Podium — classic 2nd·1st·3rd arrangement, tallest riser center */}
+          {(() => {
+            const top3 = ranked.slice(0, 3);
+            const order = top3.length >= 3 ? [1, 0, 2] : top3.length === 2 ? [1, 0] : [0];
+            return (
+              <div className="flex items-end justify-center gap-3 sm:gap-4 px-1">
+                {order.map((rank) =>
+                  top3[rank] ? (
+                    <PodiumBlock
+                      key={top3[rank].playerName}
+                      entry={top3[rank]}
+                      rank={rank}
+                      isMe={top3[rank].playerName.toLowerCase() === myName.toLowerCase()}
+                    />
+                  ) : null
+                )}
+              </div>
+            );
+          })()}
+
+          {/* 4th place and beyond — compact rows below the podium */}
+          {ranked.length > 3 && (
+            <div className="mt-4 space-y-1.5 border-t border-zinc-900 pt-3">
+              {ranked.slice(3).map((entry, i) => {
+                const rank = i + 3;
+                const isMe = entry.playerName.toLowerCase() === myName.toLowerCase();
+                return (
+                  <div
+                    key={entry.playerName}
+                    className={`flex items-center gap-3 rounded-lg border px-3 py-2 ${
+                      isMe ? "border-[#0066FF]/40 bg-[#0066FF]/10" : "border-zinc-800 bg-zinc-900/40"
+                    }`}
+                  >
+                    <span className="h-6 w-6 flex-shrink-0 flex items-center justify-center rounded-full bg-zinc-800 text-zinc-400 text-xs font-mono font-bold">
+                      #{rank + 1}
+                    </span>
+                    <span className={`flex-1 min-w-0 font-mono font-bold truncate ${isMe ? "text-[#0066FF]" : "text-zinc-200"}`}>
+                      {entry.playerName}{isMe && " (you)"}
+                    </span>
+                    <span className="flex-shrink-0 font-mono font-extrabold tabular-nums text-zinc-200">{entry.finalScore}</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ─── Main Play page Component ───────────────────────────────────────────── */
 export default function PlayPage() {
   const [phase, setPhase] = useState<Phase>("lobby");
@@ -356,6 +691,9 @@ export default function PlayPage() {
   const [videoFeedback, setVideoFeedback] = useState<string | null>(null);
   const [goingGlobal, setGoingGlobal] = useState(false);
   const [timeLeft, setTimeLeft] = useState<number | null>(null);
+  // Fires the winner confetti burst exactly once per round.
+  const [confettiBurstId, setConfettiBurstId] = useState(0);
+  const celebratedRef = useRef(false);
 
   const router = useRouter();
 
@@ -447,6 +785,8 @@ export default function PlayPage() {
             setVideoGated(false);
             setRoomState(null);
             setPhase("lobby");
+            celebratedRef.current = false;
+            setConfettiBurstId(0);
             return;
           }
 
@@ -480,6 +820,8 @@ export default function PlayPage() {
             setScoring(false);
             setVideoFeedback(null);
             setVideoGated(false);
+            celebratedRef.current = false;
+            setConfettiBurstId(0);
             // Battle started + challenge ready → play; otherwise wait for players.
             if (started) playingEnteredAtRef.current = Date.now();
             setPhase(started ? "playing" : "waiting");
@@ -704,6 +1046,17 @@ export default function PlayPage() {
     return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase, scoring, userVideo]);
+
+  // Fire the winner confetti burst the moment the room's standings resolve
+  // (every player scored) AND this player is ranked #1 — exactly once per round.
+  useEffect(() => {
+    if (phase !== "results" || !selectedRoomId || !roomState || celebratedRef.current) return;
+    const ev = evaluateRound(roomState);
+    if (ev.resolved && ev.ranked[0]?.playerName.toLowerCase() === playerName.trim().toLowerCase()) {
+      celebratedRef.current = true;
+      setConfettiBurstId((id) => id + 1);
+    }
+  }, [phase, roomState, selectedRoomId, playerName]);
 
   // Submit Prompt — score first, then generate a video. In solo practice the
   // video is only generated when the prompt similarity is strong (>70).
@@ -1364,10 +1717,11 @@ export default function PlayPage() {
                 exit={{ opacity: 0 }}
                 className="flex flex-col items-center justify-center flex-1 max-w-md mx-auto py-12"
               >
-                {/* Ring animation */}
-                <div className="relative h-20 w-20 mb-6">
-                  <div className="absolute inset-0 rounded-full border border-dashed border-[#0066FF]/30 animate-spin" style={{ animationDuration: "8s" }} />
-                  <div className="absolute inset-2.5 rounded-full border border-t-[#0066FF] border-r-transparent border-b-transparent border-l-[#0066FF] animate-spin" style={{ animationDuration: "1.5s" }} />
+                {/* VR gaming illustration — plays while the video renders */}
+                <div className="relative h-48 w-48 mb-4">
+                  <div className="absolute inset-0 rounded-full bg-[#0066FF]/15 blur-2xl" />
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src="/animations/gaming-vr-blue.svg" alt="" className="relative h-full w-full object-contain" />
                 </div>
 
                 <div className="text-center space-y-2">
@@ -1407,152 +1761,42 @@ export default function PlayPage() {
                     Reach 70+ prompt similarity to unlock video generation. Try a sharper prompt!
                   </div>
                 )}
-                {/* Room standings — Olympic podium: 2nd left · 1st center (tallest) · 3rd right */}
-                {selectedRoomId && roomState && (() => {
-                  // STRICT: rank ONLY by the final composite (text+video) score.
-                  // Submissions still analyzing (compositeScore == null) are excluded
-                  // entirely — never show text-only standings. Sort by composite desc,
-                  // breaking ties by who prompted fastest.
-                  const ranked = (roomState.submissions || [])
-                    .filter((s) => s.compositeScore != null)
-                    .sort((a, b) => (b.compositeScore! - a.compositeScore!) || (a.timeTakenToPrompt - b.timeTakenToPrompt))
-                    .slice(0, 5);
-                  return (
-                    <div className="graphite-card p-4">
-                      <h3 className="text-xs sm:text-sm font-bold text-white uppercase tracking-wider font-mono flex items-center justify-between border-b border-zinc-900 pb-2.5">
-                        <span>Room Standings</span>
-                        <span className="text-[10px] text-[#0066FF] font-mono font-semibold normal-case">Live Synced</span>
-                      </h3>
-                      {ranked.length > 0 ? (() => {
-                        const subs = ranked;
-                        // Classic podium order: 2nd, 1st, 3rd, 4th, 5th
-                        const podium = subs.length >= 2 ? [subs[1], subs[0], ...subs.slice(2)] : subs;
-                        // Bar heights for podium positions [2nd, 1st, 3rd, 4th, 5th]
-                        const barHeights = [96, 132, 72, 56, 44];
-                        const MEDALS = ["🥇", "🥈", "🥉"];
-                        return (
-                          <div className="flex items-end justify-center gap-2 sm:gap-4 mt-6 mb-1 px-2">
-                            {podium.map((sub, podiumIdx) => {
-                              const rank = subs.indexOf(sub); // 0=1st, 1=2nd, 2=3rd…
-                              const final = sub.compositeScore!; // guaranteed non-null (filtered above)
-                              const isMe = sub.playerName.toLowerCase() === playerName.toLowerCase();
-                              const isWinner = rank === 0;
-                              const barH = barHeights[podiumIdx] ?? 44;
-                              const medalLabel = MEDALS[rank] ?? `#${rank + 1}`;
-                              return (
-                                <div key={sub.playerName + podiumIdx} className="flex flex-col items-center justify-end flex-1 max-w-[110px]">
-                                  <span className="text-xl leading-none mb-0.5">{medalLabel}</span>
-                                  <span className={`text-[11px] font-mono font-bold truncate max-w-full text-center px-1 ${isMe ? "text-[#0066FF]" : isWinner ? "text-yellow-200" : "text-white"}`}>
-                                    {sub.playerName}{isMe ? " (you)" : ""}
-                                  </span>
-                                  <span className={`text-sm font-mono font-extrabold leading-tight ${isWinner ? "text-yellow-300" : "text-[#0066FF]"}`}>
-                                    {final}%
-                                  </span>
-                                  <motion.div
-                                    initial={{ height: 0 }}
-                                    animate={{ height: barH }}
-                                    transition={{ duration: 0.7, ease: "easeOut", delay: podiumIdx * 0.1 }}
-                                    className={`w-full mt-1.5 rounded-t-md border-t border-x flex items-start justify-center pt-1.5 ${
-                                      isWinner
-                                        ? "bg-yellow-500/15 border-yellow-500/40"
-                                        : isMe
-                                        ? "bg-[#0066FF]/25 border-[#0066FF]/50"
-                                        : "bg-zinc-800/70 border-zinc-700"
-                                    }`}
-                                  >
-                                    <span className={`text-[10px] font-mono font-bold ${isWinner ? "text-yellow-500/70" : "text-zinc-400"}`}>
-                                      #{rank + 1}
-                                    </span>
-                                  </motion.div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        );
-                      })() : (
-                        <div className="flex flex-col items-center justify-center py-8 gap-2.5">
-                          <div className="h-5 w-5 rounded-full border-2 border-[#0066FF] border-t-transparent animate-spin" />
-                          <p className="text-xs sm:text-sm text-zinc-500 font-mono text-center">
-                            Waiting for final scores…<br />
-                            <span className="text-[10px] text-zinc-600">Standings appear once video analysis completes.</span>
-                          </p>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })()}
+                {/* Winner celebration burst — fires once when standings resolve in my favor */}
+                <ConfettiBurst triggerKey={confettiBurstId} />
 
-                {/* Side-by-Side Dual Video — shown right under the standings */}
-                {userVideo && <DualVideo originalSrc={challenge.videoUrl} userSrc={userVideo.videoUrl} />}
-
-                {/* Final score + evaluation details — only shown once video similarity is ready */}
                 {(() => {
-                  // finalScore is ONLY computed once videoScore arrives — see
-                  // computeFinalScore() in lib/scoring.ts for the weighting.
-                  const finalScore = computeFinalScore(result.score, videoScore);
+                  // My own score is independent of the room — it's ready as soon as MY
+                  // video similarity resolves, regardless of other players' progress.
+                  const myFinalScore = computeFinalScore(result.score, videoScore);
+                  const headline = myFinalScore == null ? "Calculating your final score…" : evaluationRemark(myFinalScore);
+                  const subtext = myFinalScore == null
+                    ? "Please wait — analyzing your video against the reference"
+                    : "Based on combined prompt (40%) + video similarity (60%)";
+
+                  // Room standings are gated on EVERY player finishing — see evaluateRound().
+                  const roundEval = selectedRoomId && roomState ? evaluateRound(roomState) : null;
+                  const amWinner = !!roundEval?.resolved
+                    && roundEval.ranked[0]?.playerName.toLowerCase() === playerName.trim().toLowerCase();
+
                   return (
-                    <div className="graphite-card p-5">
-                      <div className="flex flex-col sm:flex-row items-center gap-5">
-                        {/* Big final-score ring — spinner while waiting, value once ready */}
-                        <div className="relative flex-shrink-0 h-28 w-28 flex items-center justify-center">
-                          {finalScore == null ? (
-                            <>
-                              <motion.svg
-                                className="h-28 w-28"
-                                viewBox="0 0 36 36"
-                                animate={{ rotate: 360 }}
-                                transition={{ duration: 1.1, repeat: Infinity, ease: "linear" }}
-                              >
-                                <circle cx="18" cy="18" r="16" fill="none" stroke="#27272a" strokeWidth="2.5" />
-                                <circle cx="18" cy="18" r="16" fill="none" stroke="#0066FF" strokeWidth="2.5" strokeLinecap="round" strokeDasharray="22 100" />
-                              </motion.svg>
-                              <div className="absolute flex flex-col items-center">
-                                <span className="text-[11px] uppercase tracking-wider text-[#0066FF] font-mono font-bold">Wait</span>
-                                <motion.span
-                                  className="text-[9px] text-zinc-500 font-mono mt-0.5"
-                                  animate={{ opacity: [0.3, 1, 0.3] }}
-                                  transition={{ duration: 1.4, repeat: Infinity }}
-                                >
-                                  analyzing…
-                                </motion.span>
-                              </div>
-                            </>
-                          ) : (
-                            <>
-                              <svg className="h-28 w-28 -rotate-90" viewBox="0 0 36 36">
-                                <circle cx="18" cy="18" r="16" fill="none" stroke="#27272a" strokeWidth="2.5" />
-                                <motion.circle cx="18" cy="18" r="16" fill="none" stroke="#0066FF" strokeWidth="2.5" strokeLinecap="round" initial={{ strokeDasharray: "0 100" }} animate={{ strokeDasharray: `${finalScore} 100` }} transition={{ duration: 1.2, ease: "easeOut" }} />
-                              </svg>
-                              <div className="absolute flex flex-col items-center">
-                                <motion.span
-                                  initial={{ scale: 0.6, opacity: 0 }}
-                                  animate={{ scale: 1, opacity: 1 }}
-                                  transition={{ type: "spring", stiffness: 260, damping: 18 }}
-                                  className="text-3xl font-extrabold text-white font-mono leading-none"
-                                >
-                                  {finalScore}
-                                </motion.span>
-                                <span className="text-[9px] uppercase tracking-wider text-[#0066FF] font-mono mt-1">Final Score</span>
-                              </div>
-                            </>
-                          )}
-                        </div>
-                        {/* Headline remark */}
-                        <div className="flex-1 text-center sm:text-left">
-                          <p className="text-base sm:text-lg font-bold text-white leading-snug">
-                            {finalScore == null ? "Calculating your final score…" : evaluationRemark(finalScore)}
-                          </p>
-                          <p className="mt-1.5 text-xs text-zinc-500 font-mono">
-                            {finalScore == null
-                              ? "Please wait — analyzing your video against the reference"
-                              : "Based on combined prompt (40%) + video similarity (60%)"}
-                          </p>
-                        </div>
+                    <>
+                      {/* TOP ROW: my score circle (left) + battle standings (right) */}
+                      <div className={selectedRoomId ? "grid gap-4 lg:grid-cols-[minmax(0,300px)_1fr] items-stretch" : ""}>
+                        <MyScoreCard finalScore={myFinalScore} headline={headline} subtext={subtext} amWinner={amWinner} />
+                        {selectedRoomId && roomState && roundEval && (
+                          <StandingsCard
+                            ranked={roundEval.ranked}
+                            resolved={roundEval.resolved}
+                            finishedCount={roundEval.finishedCount}
+                            totalCount={roundEval.totalCount}
+                            myName={playerName}
+                          />
+                        )}
                       </div>
 
-                      {/* Evaluation details — only shown once final score is ready */}
-                      {finalScore != null && (
-                        <div className="mt-4 rounded-lg border border-zinc-800 bg-black/40 p-3.5 space-y-3">
+                      {/* Evaluation details — only shown once MY final score is ready */}
+                      {myFinalScore != null && (
+                        <div className="graphite-card p-4 sm:p-5 space-y-3">
                           <p className="text-[10px] uppercase font-bold tracking-wider text-zinc-500 font-mono">Evaluation Details</p>
                           <div className="flex gap-3">
                             <span className="mt-0.5 text-[10px] font-bold font-mono text-[#0066FF] uppercase w-12 flex-shrink-0">Prompt</span>
@@ -1567,12 +1811,15 @@ export default function PlayPage() {
                         </div>
                       )}
 
+                      {/* Side-by-side dual video */}
+                      {userVideo && <DualVideo originalSrc={challenge.videoUrl} userSrc={userVideo.videoUrl} />}
+
                       {/* Your prompt */}
-                      <div className="mt-3 rounded border border-zinc-800 bg-black/30 px-3 py-2.5">
+                      <div className="graphite-card px-4 py-3">
                         <p className="text-[10px] uppercase font-bold text-zinc-600 font-mono mb-1">Your Prompt</p>
                         <p className="text-xs text-zinc-300 italic font-mono leading-relaxed">{prompt}</p>
                       </div>
-                    </div>
+                    </>
                   );
                 })()}
 
