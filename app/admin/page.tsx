@@ -39,7 +39,7 @@ const RANK_STYLE = [
   "border-amber-700/40 bg-amber-700/8 text-amber-400",
 ];
 
-function LiveVideo({ src }: { src: string }) {
+function LiveVideo({ src, fit = "cover" }: { src: string; fit?: "cover" | "contain" }) {
   const ref = useRef<HTMLVideoElement>(null);
   useEffect(() => {
     const el = ref.current;
@@ -51,7 +51,7 @@ function LiveVideo({ src }: { src: string }) {
     return () => el.removeEventListener("canplay", play);
   }, [src]);
   return (
-    <video ref={ref} src={src} muted playsInline loop preload="auto" className="w-full h-full object-cover" />
+    <video ref={ref} src={src} muted playsInline loop preload="auto" className={`w-full h-full ${fit === "contain" ? "object-contain" : "object-cover"}`} />
   );
 }
 
@@ -252,7 +252,7 @@ export default function AdminPage() {
 
       {/* ── HERO: fills viewport below navbar ────────────────────────────── */}
       <section className="h-[calc(100vh-4rem)] px-4 py-3 overflow-hidden flex flex-col">
-        <div className="mx-auto w-full max-w-6xl flex-1 flex flex-col gap-3 min-h-0">
+        <div className="mx-auto w-full max-w-[1800px] flex-1 flex flex-col gap-3 min-h-0">
 
           {/* Main hero content */}
           {heroRoom ? (
@@ -260,7 +260,7 @@ export default function AdminPage() {
 
               {/* LEFT: Video */}
               <div className="relative rounded-xl overflow-hidden border border-zinc-700 bg-black min-h-0">
-                <LiveVideo src={heroRoom.challengeDetails!.videoUrl} />
+                <LiveVideo src={heroRoom.challengeDetails!.videoUrl} fit="contain" />
 
                 <div className="absolute top-0 left-0 right-0 p-4 bg-gradient-to-b from-black/80 to-transparent pointer-events-none">
                   <p className="text-xs uppercase font-bold text-zinc-400 font-mono tracking-wider">{heroRoom.name}</p>

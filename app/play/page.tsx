@@ -121,7 +121,7 @@ function ChallengeVideo({ src }: { src: string }) {
         playsInline
         loop
         preload="auto"
-        className="h-full w-full object-cover"
+        className="h-full w-full object-contain"
       />
       {/* Sync Badge */}
       <div className="absolute top-4 left-4 flex items-center gap-2 rounded border border-zinc-700 bg-black/90 px-3 py-1.5 text-xs font-semibold text-white backdrop-blur">
@@ -1288,7 +1288,7 @@ export default function PlayPage() {
         )}
       </AnimatePresence>
 
-      <div className="relative mx-auto w-full max-w-6xl px-4 py-6 flex-1 flex flex-col min-h-0">
+      <div className={`relative mx-auto w-full px-4 py-6 flex-1 flex flex-col min-h-0 ${phase === "playing" ? "max-w-[1800px]" : "max-w-6xl"}`}>
 
         {/* ── HEADER BAR ──────────────────────────────────────────────── */}
         <div className="mb-4 flex items-center justify-between border-b border-zinc-800 pb-3.5">
