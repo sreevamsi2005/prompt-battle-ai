@@ -1794,6 +1794,9 @@ export default function PlayPage() {
                         )}
                       </div>
 
+                      {/* Side-by-side dual video */}
+                      {userVideo && <DualVideo originalSrc={challenge.videoUrl} userSrc={userVideo.videoUrl} />}
+
                       {/* Evaluation details — only shown once MY final score is ready */}
                       {myFinalScore != null && (
                         <div className="graphite-card p-4 sm:p-5 space-y-3">
@@ -1810,9 +1813,6 @@ export default function PlayPage() {
                           </div>
                         </div>
                       )}
-
-                      {/* Side-by-side dual video */}
-                      {userVideo && <DualVideo originalSrc={challenge.videoUrl} userSrc={userVideo.videoUrl} />}
 
                       {/* Your prompt */}
                       <div className="graphite-card px-4 py-3">
