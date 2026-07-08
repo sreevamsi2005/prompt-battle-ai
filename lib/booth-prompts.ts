@@ -172,5 +172,47 @@ function getDefaultPrompts(): BoothPrompt[] {
       difficulty: "easy",
       theme: "Peaks & Light",
     },
+    {
+      id: "golden-retriever-beach",
+      prompt:
+        "A golden retriever running along a sunset beach, splashing through shallow ocean waves, warm golden backlight, slow motion, cinematic wide shot",
+      difficulty: "medium",
+      theme: "Shoreline Joy",
+    },
+    {
+      id: "misty-forest-fox",
+      prompt:
+        "A red fox trotting through a misty pine forest at dawn, soft golden light shafts piercing through the fog, wide atmospheric cinematic shot",
+      difficulty: "medium",
+      theme: "Foggy Trail",
+    },
+    {
+      id: "storm-lighthouse",
+      prompt:
+        "A lone lighthouse on a rocky cliff battered by crashing waves during a dramatic storm at dusk, moody grey-blue sky, wide cinematic shot",
+      difficulty: "medium",
+      theme: "Coastal Storm",
+    },
+    {
+      id: "glacier-fjord",
+      prompt:
+        "A massive glacial waterfall cascading into a turquoise arctic fjord, icebergs drifting below, crisp cold light, sweeping aerial wide shot",
+      difficulty: "medium",
+      theme: "Arctic Cascade",
+    },
+    {
+      id: "desert-caravan",
+      prompt:
+        "A camel caravan silhouetted against golden desert dunes at sunset, long dramatic shadows, warm sweeping wide cinematic shot",
+      difficulty: "medium",
+      theme: "Dune Silhouette",
+    },
+    {
+      id: "hummingbird-garden",
+      prompt:
+        "A hummingbird hovering beside vibrant tropical flowers in a lush garden at morning, soft dew light, slow motion close cinematic shot",
+      difficulty: "medium",
+      theme: "Garden Flutter",
+    },
   ];
 }
