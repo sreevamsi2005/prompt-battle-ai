@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { loadRooms } from "@/lib/rooms";
 import { loadLeaderboard } from "@/lib/server-leaderboard";
+import { getFalKeyPool } from "@/lib/key-pool";
 
 // GET /api/debug - Check storage status (remove before production if sensitive)
 export async function GET() {
@@ -14,7 +15,7 @@ export async function GET() {
       env: {
         NETLIFY: process.env.NETLIFY ?? "(not set)",
         hasBlobs: !!process.env.NETLIFY_BLOBS_CONTEXT,
-        hasFalKey: !!process.env.FAL_KEY,
+        falKeyPoolSize: getFalKeyPool().length,
         hasOpenAI: !!process.env.OPENAI_API_KEY,
         hasGemini: !!process.env.GEMINI_API_KEY,
         hasAdminPw: !!process.env.ADMIN_PASSWORD,

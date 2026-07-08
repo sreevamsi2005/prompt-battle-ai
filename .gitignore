@@ -32,6 +32,9 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+# .env.example holds placeholder values only (no real secrets) — it's the
+# setup template referenced from README.md, so it should actually be tracked.
+!.env.example
 
 # vercel
 .vercel
@@ -51,6 +54,8 @@ next-env.d.ts
 /data/rooms-replay-requests.json
 # local event-log store (Netlify Blobs in production)
 /data/logs-events.json
+# local fal.ai key-pool round-robin/request-mapping store (Netlify Blobs in production)
+/data/keypool-*.json
 
 # local agent / editor state
 /.claude/
