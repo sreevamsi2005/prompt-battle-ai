@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { fal } from "@fal-ai/client";
+import { createFalClient } from "@fal-ai/client";
 import { setCachedVideo } from "@/lib/video-cache";
 import { downloadVideoInBackground } from "@/lib/download-video";
-import { logVideoGenTerminal } from "@/lib/event-log";
+import { logVideoGenTerminal, loadEvents } from "@/lib/event-log";
 import { getKeyForRequest, clearRequestKeyIndex } from "@/lib/key-pool";
+import { recordVideoGenerationCost } from "@/lib/video-cost-log";
 
 const MODEL = "fal-ai/vidu/q3/text-to-video/turbo";
 
@@ -22,12 +23,14 @@ export async function GET(req: NextRequest) {
   if (!apiKey) {
     return NextResponse.json({ status: "FAILED", error: "No fal.ai API key configured", stage: "queue_status" });
   }
-  fal.config({ credentials: apiKey });
+  // Isolated client scoped to this key — see the note in generate-prompt/route.ts
+  // on why this must not be the shared global `fal` singleton + fal.config().
+  const client = createFalClient({ credentials: apiKey });
 
   // Stage: poll the queue for status.
-  let status: Awaited<ReturnType<typeof fal.queue.status>>;
+  let status: Awaited<ReturnType<typeof client.queue.status>>;
   try {
-    status = await fal.queue.status(MODEL, { requestId, logs: false });
+    status = await client.queue.status(MODEL, { requestId, logs: false });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("fal.ai queue status check failed:", message, "requestId:", requestId);
@@ -56,7 +59,7 @@ export async function GET(req: NextRequest) {
   // Stage: fetch the completed result.
   let output: any;
   try {
-    const result = await fal.queue.result(MODEL, { requestId });
+    const result = await client.queue.result(MODEL, { requestId });
     output = result.data;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -88,6 +91,18 @@ export async function GET(req: NextRequest) {
   // durationMs (queue→complete) is computed inside from the queued event.
   await logVideoGenTerminal(requestId, "completed", { videoUrl });
   await clearRequestKeyIndex(requestId);
+
+  // Cost/usage record — looks up the original prompt + player from the
+  // matching video_gen_queued event (same requestId). Never throws; a
+  // logging failure here must not affect the player's result.
+  const queuedEvent = (await loadEvents({ type: "video_gen_queued" })).find((e) => e.requestId === requestId);
+  await recordVideoGenerationCost({
+    id: generatedId,
+    requestId,
+    videoUrl,
+    prompt: (queuedEvent?.detail?.prompt as string | undefined) ?? null,
+    playerName: queuedEvent?.playerName,
+  });
 
   return NextResponse.json({ status: "COMPLETED", videoUrl });
 }

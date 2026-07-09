@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { fal } from "@fal-ai/client";
+import { createFalClient } from "@fal-ai/client";
 import { logEvent } from "@/lib/event-log";
 import { getFalKeyPool, withFalKeyFailover, recordRequestKeyIndex } from "@/lib/key-pool";
 
@@ -39,12 +39,20 @@ export async function POST(req: NextRequest) {
   // concurrent players' jobs land in the queue together instead of being chained.
   // Key chosen round-robin from the pool, with automatic failover to the next
   // key if this one is rejected, rate-limited, or out of quota.
+  //
+  // IMPORTANT: use createFalClient() to build an isolated client scoped to
+  // this one request's chosen key, rather than the shared global `fal`
+  // singleton + fal.config(). Mutating global client config is unsafe if the
+  // runtime ever handles concurrent requests on a warm instance — two
+  // requests racing to set different credentials on the same shared client
+  // can both end up submitting with whichever key was set last, which is
+  // exactly the "everything uses one key" symptom seen in production.
   try {
     let usedKeyIndex = 0;
     const { request_id } = await withFalKeyFailover(async (apiKey) => {
       usedKeyIndex = pool.indexOf(apiKey);
-      fal.config({ credentials: apiKey });
-      return fal.queue.submit(MODEL, {
+      const client = createFalClient({ credentials: apiKey });
+      return client.queue.submit(MODEL, {
         input: {
           prompt: userPrompt,
           duration: 4,
@@ -64,7 +72,7 @@ export async function POST(req: NextRequest) {
     await logEvent({
       type: "video_gen_queued", status: "ok", playerName, requestId: request_id,
       durationMs: Date.now() - startTime,
-      detail: { model: MODEL, promptChars: userPrompt.length, keyIndex: usedKeyIndex, poolSize: pool.length },
+      detail: { model: MODEL, prompt: userPrompt, promptChars: userPrompt.length, keyIndex: usedKeyIndex, poolSize: pool.length },
     });
     return NextResponse.json({ requestId: request_id });
   } catch (err) {

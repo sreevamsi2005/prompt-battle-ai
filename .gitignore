@@ -54,6 +54,10 @@ next-env.d.ts
 /data/rooms-replay-requests.json
 # local event-log store (Netlify Blobs in production)
 /data/logs-events.json
+# local video-generation cost/usage log (Netlify Blobs in production) —
+# same reasoning as the other local-dev mirrors above: production's real,
+# live-growing log lives in Netlify Blobs, not this file
+/data/video-generation-costs.json
 # local fal.ai key-pool round-robin/request-mapping store (Netlify Blobs in production)
 /data/keypool-*.json
 

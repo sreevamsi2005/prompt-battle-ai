@@ -11,6 +11,7 @@ const LOCAL_FILE: Record<string, string> = {
   "rooms:rooms": "data/rooms.json",
   "rooms:submissions": "data/room-submissions.json",
   "leaderboard:entries": "data/leaderboard.json",
+  "videocosts:log": "data/video-generation-costs.json",
 };
 
 function localPath(store: string, key: string): string {
