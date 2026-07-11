@@ -216,7 +216,7 @@ export default function AdminPage() {
   function buildRoundRankings(r: RoomAdminState) {
     const submitted = r.submissions ?? [];
     // The final score is shown ONLY once video analysis resolves — composite
-    // (text*0.2 + video*0.8) on success, or the text score if video is
+    // (text*0.3 + video*0.7) on success, or the text score if video is
     // unavailable. While analysis is pending it stays null so the admin shows
     // "scoring…" instead of the bare text score. A time-based safety net falls
     // back to the text score if a video never resolves (e.g. generation failed

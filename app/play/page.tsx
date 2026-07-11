@@ -1771,7 +1771,7 @@ export default function PlayPage() {
                   const headline = myFinalScore == null ? "Calculating your final score…" : evaluationRemark(myFinalScore);
                   const subtext = myFinalScore == null
                     ? "Please wait — analyzing your video against the reference"
-                    : "Based on combined prompt (40%) + video similarity (60%)";
+                    : "Based on combined prompt (30%) + video similarity (70%)";
 
                   // Room standings are gated on EVERY player finishing — see evaluateRound().
                   const roundEval = selectedRoomId && roomState ? evaluateRound(roomState) : null;

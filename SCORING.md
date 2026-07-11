@@ -45,7 +45,7 @@ a moment after results appear.
 ## 3. Final score (the only score shown) — `lib/scoring.ts` → `computeFinalScore`
 
 ```
-finalScore = round(textScore * 0.4 + videoScore * 0.6)
+finalScore = round(textScore * 0.3 + videoScore * 0.7)
 ```
 
 - If no video was generated (e.g. solo prompt ≤70, or generation failed/skipped),
@@ -91,7 +91,7 @@ Instead of separate numbers, results show:
 ---
 
 ## Tuning
-- The 40/60 (text/video) blend is defined ONCE in `computeFinalScore()` in
+- The 30/70 (text/video) blend is defined ONCE in `computeFinalScore()` in
   `lib/scoring.ts` — `lib/rooms.ts`, `app/api/video-similarity/route.ts`, and
   `app/play/page.tsx` all call that function rather than hardcoding the weights,
   so changing the blend only ever requires editing that one place.

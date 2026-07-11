@@ -45,7 +45,7 @@ If neither `OPENAI_API_KEY` nor `GEMINI_API_KEY` is set, prompt scoring falls ba
 4. **Submit** → the prompt is scored for semantic similarity immediately (so admin standings show "submitted" right away), then queued to fal.ai for video generation. The player is dropped straight into **Results** the moment their video finishes rendering — they don't wait for scoring to see their video.
 5. **Results** — the player's own score fills in as it resolves. In multiplayer, the **standings panel stays in a waiting state until every present player's final score has resolved** (never shows a premature "leader" that then flips as others finish), then reveals a 3D podium with the top 3, a full ranked list, and a confetti burst for whoever's in first. A side-by-side reference/generated video comparison and prompt+video feedback follow below.
 
-Final score = **40% prompt similarity + 60% video similarity** (see [SCORING.md](SCORING.md) for the exact formulas and calibration). Scores publish to the room's live standings immediately and to the global leaderboard once resolved.
+Final score = **30% prompt similarity + 70% video similarity** (see [SCORING.md](SCORING.md) for the exact formulas and calibration). Scores publish to the room's live standings immediately and to the global leaderboard once resolved.
 
 ## Admin Panel
 
@@ -90,7 +90,7 @@ components/
   Leaderboard.tsx                # Leaderboard table (used in app/leaderboard/page.tsx)
 lib/
   rooms.ts                     # Room/player/submission model, battle sync, ranking
-  scoring.ts                   # Final-score formula (40% text + 60% video)
+  scoring.ts                   # Final-score formula (30% text + 70% video)
   video-analysis.ts             # Gemini video-embedding similarity (+ frame-sampling fallback)
   booth-prompts.ts              # Challenge prompt loading
   server-leaderboard.ts         # Global leaderboard persistence/ranking
