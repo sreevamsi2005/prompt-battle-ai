@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { devStoreFile } from "./blob-storage";
 
 export interface CacheEntry {
   cdnUrl: string;
@@ -7,7 +8,10 @@ export interface CacheEntry {
   downloaded: boolean;
 }
 
-const CACHE_FILE = path.join(process.cwd(), "data", "video-cache.json");
+// Dev cache lives outside the project tree (see blob-storage.ts) so writes don't
+// trip Next's dev file-watcher and reload the page. Reads fall back to any
+// existing ./data/video-cache.json until the first write migrates it.
+const { read: CACHE_READ_FILE, write: CACHE_WRITE_FILE } = devStoreFile("video-cache.json");
 
 const memCache = new Map<string, CacheEntry>();
 let loaded = false;
@@ -26,8 +30,8 @@ function load() {
 
   // Load from local file when running in dev (non-fatal if absent).
   try {
-    if (fs.existsSync(CACHE_FILE)) {
-      const raw = fs.readFileSync(CACHE_FILE, "utf-8");
+    if (fs.existsSync(CACHE_READ_FILE)) {
+      const raw = fs.readFileSync(CACHE_READ_FILE, "utf-8");
       const data = JSON.parse(raw) as Record<string, CacheEntry | string>;
       for (const [k, v] of Object.entries(data)) {
         loadEntry(k, v);
@@ -41,7 +45,9 @@ function load() {
 function persist() {
   try {
     const obj = Object.fromEntries(memCache.entries());
-    fs.writeFileSync(CACHE_FILE, JSON.stringify(obj, null, 2), "utf-8");
+    const dir = path.dirname(CACHE_WRITE_FILE);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(CACHE_WRITE_FILE, JSON.stringify(obj, null, 2), "utf-8");
   } catch {
     // non-fatal — Netlify filesystem is read-only outside /tmp
   }

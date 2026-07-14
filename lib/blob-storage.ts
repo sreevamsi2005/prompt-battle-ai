@@ -1,4 +1,5 @@
 import fs from "fs";
+import os from "os";
 import path from "path";
 
 // NETLIFY_BLOBS_CONTEXT is injected by Netlify's runtime when blobs are available.
@@ -7,18 +8,60 @@ function useBlobs(): boolean {
   return !!process.env.NETLIFY_BLOBS_CONTEXT;
 }
 
+// ── Local dev store location ────────────────────────────────────────────────
+// In local dev (no Netlify Blobs) the store is file-backed. It MUST live outside
+// the project tree: Next's dev watcher (Turbopack in Next 16) recompiles and
+// full-reloads the page on ANY change under the project root. Writing gameplay
+// state into ./data — rooms.json on every 3s heartbeat, plus submissions,
+// leaderboard, and the per-request event log on submit — made the /play page
+// "refresh" and snap back to a fresh challenge mid-round. Keeping these writes
+// under the OS temp dir hides them from the watcher entirely. (Production uses
+// Netlify Blobs, so this whole path is dev-only.)
+//
+// Reads fall back to the legacy ./data file when the dev-store copy doesn't exist
+// yet, so committed seed data (leaderboard) and existing local state (room
+// config, video-cost history) is honored once; thereafter writes live out of tree.
+const DEV_STORE_DIR = path.join(os.tmpdir(), "prompt-battle-devstore");
+
+// store:key -> bare filename (applied to BOTH the dev store and the ./data fallback).
 const LOCAL_FILE: Record<string, string> = {
-  "rooms:rooms": "data/rooms.json",
-  "rooms:submissions": "data/room-submissions.json",
-  "leaderboard:entries": "data/leaderboard.json",
-  "videocosts:log": "data/video-generation-costs.json",
+  "rooms:rooms": "rooms.json",
+  "rooms:submissions": "room-submissions.json",
+  "leaderboard:entries": "leaderboard.json",
+  "videocosts:log": "video-generation-costs.json",
 };
 
+function fileName(store: string, key: string): string {
+  return LOCAL_FILE[`${store}:${key}`] ?? `${store}-${key}.json`;
+}
+
+// Writable location — out of the watched project tree.
 function localPath(store: string, key: string): string {
-  return path.join(
-    process.cwd(),
-    LOCAL_FILE[`${store}:${key}`] ?? `data/${store}-${key}.json`
-  );
+  return path.join(DEV_STORE_DIR, fileName(store, key));
+}
+
+// Legacy in-project location — read-only fallback for the first access after this
+// change, so existing ./data files keep working until the first write migrates them.
+function legacyPath(store: string, key: string): string {
+  return path.join(process.cwd(), "data", fileName(store, key));
+}
+
+// Path to READ from: prefer the dev store, else the legacy ./data file, else null.
+function readablePath(store: string, key: string): string | null {
+  const p = localPath(store, key);
+  if (fs.existsSync(p)) return p;
+  const legacy = legacyPath(store, key);
+  if (fs.existsSync(legacy)) return legacy;
+  return null;
+}
+
+// Exposed so other file-backed dev caches (e.g. lib/video-cache.ts) can keep
+// their writes out of the dev watcher's tree too, with the same legacy fallback.
+export function devStoreFile(baseName: string): { read: string; write: string } {
+  const write = path.join(DEV_STORE_DIR, baseName);
+  if (fs.existsSync(write)) return { read: write, write };
+  const legacy = path.join(process.cwd(), "data", baseName);
+  return { read: fs.existsSync(legacy) ? legacy : write, write };
 }
 
 export async function blobGet<T>(store: string, key: string, fallback: T): Promise<T> {
@@ -33,11 +76,13 @@ export async function blobGet<T>(store: string, key: string, fallback: T): Promi
     }
   }
 
-  const file = path.join(process.cwd(), LOCAL_FILE[`${store}:${key}`] ?? `data/${store}-${key}.json`);
-  try {
-    if (fs.existsSync(file)) return JSON.parse(fs.readFileSync(file, "utf-8")) as T;
-  } catch (err) {
-    console.error(`[fs] read ${file} failed:`, err);
+  const file = readablePath(store, key);
+  if (file) {
+    try {
+      return JSON.parse(fs.readFileSync(file, "utf-8")) as T;
+    } catch (err) {
+      console.error(`[fs] read ${file} failed:`, err);
+    }
   }
   return fallback;
 }
@@ -50,7 +95,7 @@ export async function blobSet<T>(store: string, key: string, data: T): Promise<v
     return;
   }
 
-  const file = path.join(process.cwd(), LOCAL_FILE[`${store}:${key}`] ?? `data/${store}-${key}.json`);
+  const file = localPath(store, key);
   const dir = path.dirname(file);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(file, JSON.stringify(data, null, 2), "utf-8");
@@ -79,14 +124,20 @@ export async function blobGetWithEtag<T>(store: string, key: string): Promise<Et
     }
   }
 
-  const file = localPath(store, key);
+  const p = localPath(store, key);
   try {
-    if (fs.existsSync(file)) {
-      const value = JSON.parse(fs.readFileSync(file, "utf-8")) as T;
-      return { value, etag: String(fs.statSync(file).mtimeMs) };
+    if (fs.existsSync(p)) {
+      const value = JSON.parse(fs.readFileSync(p, "utf-8")) as T;
+      return { value, etag: String(fs.statSync(p).mtimeMs) };
+    }
+    // Legacy ./data fallback — return NO etag so blobUpdate treats it as
+    // "create new" and the first write lands in the dev store via blobSetIfNew.
+    const legacy = legacyPath(store, key);
+    if (fs.existsSync(legacy)) {
+      return { value: JSON.parse(fs.readFileSync(legacy, "utf-8")) as T };
     }
   } catch (err) {
-    console.error(`[fs] read ${file} failed:`, err);
+    console.error(`[fs] read ${p} failed:`, err);
   }
   return { value: null };
 }

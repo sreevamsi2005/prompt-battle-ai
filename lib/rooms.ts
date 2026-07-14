@@ -1,4 +1,4 @@
-import { blobGet, blobSet, blobUpdate } from "./blob-storage";
+import { blobGet, blobUpdate } from "./blob-storage";
 import { computeFinalScore } from "./scoring";
 
 export interface ActivePlayer {
@@ -67,114 +67,133 @@ function cleanupInactivePlayers(room: Room): Room {
   return { ...room, players, battleStartedAt };
 }
 
-export async function loadRooms(): Promise<Room[]> {
-  const rooms = await blobGet<Room[]>("rooms", "rooms", []);
-  const cleaned = rooms.map(cleanupInactivePlayers);
+const DEFAULT_ROOM: Omit<Room, "createdAt"> = {
+  id: "main-room",
+  name: "Battle Room",
+  maxUsers: 4,
+  activeChallengeId: null,
+  players: [],
+  battleStartedAt: null,
+};
 
-  // Always ensure at least one room exists
-  if (cleaned.length === 0) {
-    const defaultRoom: Room = {
-      id: "main-room",
-      name: "Battle Room",
-      maxUsers: 4,
-      activeChallengeId: null,
-      createdAt: Date.now(),
-      players: [],
-      battleStartedAt: null,
-    };
-    await saveRooms([defaultRoom]);
-    return [defaultRoom];
-  }
-
-  const changed = rooms.some((r, i) =>
-    (r.players?.length ?? 0) !== (cleaned[i].players?.length ?? 0) ||
-    (r.battleStartedAt ?? null) !== (cleaned[i].battleStartedAt ?? null)
+// Every room mutation goes through here so writes to the shared "rooms" blob are
+// serialized with optimistic concurrency (etag compare-and-set + retry) — exactly
+// like room submissions already are. Plain blobGet + blobSet (read-modify-write
+// with NO etag) was the production bug: with many players heartbeating every 3s
+// across concurrent serverless instances, updates clobbered each other and a stale
+// read briefly resurrected an empty player list, which flipped battleStartedAt
+// between null and its real value. The /play client keys each round on
+// `activeChallengeId:battleStartedAt`, so that flip wiped state and bounced players
+// back to a fresh challenge mid-round (worst during the long post-submit
+// generating/results window). Cleanup runs INSIDE the transaction against the
+// latest value, so it can't act on a stale snapshot. Extra retries because a busy
+// booth can put a dozen concurrent writers on this one key.
+async function mutateRooms(mutate: (rooms: Room[]) => void): Promise<Room[]> {
+  return blobUpdate<Room[]>(
+    "rooms",
+    "rooms",
+    [],
+    (cur) => {
+      let rooms = (cur ?? []).map(cleanupInactivePlayers);
+      if (rooms.length === 0) rooms = [{ ...DEFAULT_ROOM, createdAt: Date.now() }];
+      mutate(rooms);
+      return rooms;
+    },
+    12
   );
-  if (changed) await saveRooms(cleaned);
-  return cleaned;
 }
 
-export async function saveRooms(rooms: Room[]): Promise<void> {
-  await blobSet("rooms", "rooms", rooms);
+export async function loadRooms(): Promise<Room[]> {
+  const rooms = await blobGet<Room[]>("rooms", "rooms", []);
+  // Seed the default room once, atomically, if none exists yet.
+  if (rooms.length === 0) return mutateRooms(() => {});
+  // Read path: apply cleanup in-memory only. The cleaned state is persisted by
+  // the next mutation (heartbeats run every few seconds), so reads never write
+  // and therefore never race with concurrent writers.
+  return rooms.map(cleanupInactivePlayers);
 }
 
 export async function updateRoomChallenge(roomId: string, challengeId: string | null): Promise<Room | undefined> {
-  const rooms = await loadRooms();
-  const room = rooms.find(r => r.id === roomId);
-  if (room) {
-    room.activeChallengeId = challengeId;
-    // New challenge → new round: players wait again until the battle (re)starts.
-    room.battleStartedAt = null;
-    await saveRooms(rooms);
-  }
-  return room;
+  const rooms = await mutateRooms((rs) => {
+    const room = rs.find(r => r.id === roomId);
+    if (room) {
+      room.activeChallengeId = challengeId;
+      // New challenge → new round: players wait again until the battle (re)starts.
+      room.battleStartedAt = null;
+    }
+  });
+  return rooms.find(r => r.id === roomId);
 }
 
 // Force-start the battle (admin) — begins the round even if the room isn't full.
 export async function startBattle(roomId: string): Promise<Room | undefined> {
-  const rooms = await loadRooms();
-  const room = rooms.find(r => r.id === roomId);
-  if (room && room.activeChallengeId && room.battleStartedAt == null) {
-    room.battleStartedAt = Date.now();
-    await saveRooms(rooms);
-  }
-  return room;
+  const rooms = await mutateRooms((rs) => {
+    const room = rs.find(r => r.id === roomId);
+    if (room && room.activeChallengeId && room.battleStartedAt == null) {
+      room.battleStartedAt = Date.now();
+    }
+  });
+  return rooms.find(r => r.id === roomId);
 }
 
 // Full session reset: clear the challenge, battle, and player list, and bump
 // resetAt so every connected client returns to the /play lobby on its next
 // heartbeat. Scores/replay requests are cleared separately by the caller.
 export async function resetRoom(roomId: string): Promise<Room | undefined> {
-  const rooms = await loadRooms();
-  const room = rooms.find(r => r.id === roomId);
-  if (room) {
-    room.activeChallengeId = null;
-    room.battleStartedAt = null;
-    room.players = [];
-    room.resetAt = Date.now();
-    await saveRooms(rooms);
-  }
-  return room;
+  const rooms = await mutateRooms((rs) => {
+    const room = rs.find(r => r.id === roomId);
+    if (room) {
+      room.activeChallengeId = null;
+      room.battleStartedAt = null;
+      room.players = [];
+      room.resetAt = Date.now();
+    }
+  });
+  return rooms.find(r => r.id === roomId);
 }
 
 export async function updateRoomMaxUsers(roomId: string, maxUsers: number): Promise<Room | undefined> {
-  const rooms = await loadRooms();
-  const room = rooms.find(r => r.id === roomId);
-  if (room) {
-    room.maxUsers = Math.max(1, Math.min(20, maxUsers));
-    await saveRooms(rooms);
-  }
-  return room;
+  const rooms = await mutateRooms((rs) => {
+    const room = rs.find(r => r.id === roomId);
+    if (room) room.maxUsers = Math.max(1, Math.min(20, maxUsers));
+  });
+  return rooms.find(r => r.id === roomId);
 }
 
 export async function registerPlayerHeartbeat(roomId: string, playerName: string): Promise<Room | undefined> {
-  const rooms = await loadRooms();
-  const room = rooms.find(r => r.id === roomId);
-  if (!room) return undefined;
-  room.players = room.players ?? [];
-  const now = Date.now();
-  const name = playerName.trim();
-  const wasEmpty = room.players.length === 0;
-  const idx = room.players.findIndex(p => p.playerName.toLowerCase() === name.toLowerCase());
-  if (idx !== -1) {
-    room.players[idx].lastSeen = now;
-    room.players[idx].playerName = name;
-  } else if (room.players.length < room.maxUsers) {
-    room.players.push({ playerName: name, lastSeen: now });
-  } else {
-    return undefined;
-  }
-  // First player into an empty room begins a fresh round: clear any stale
-  // battle timestamp so they wait (and auto-start can fire again when full).
-  if (wasEmpty) {
-    room.battleStartedAt = null;
-  }
-  // Auto-start the battle once every slot is filled and a challenge is set.
-  if (room.activeChallengeId && room.battleStartedAt == null && room.players.length >= room.maxUsers) {
-    room.battleStartedAt = now;
-  }
-  await saveRooms(rooms);
-  return room;
+  // `rejected` = the room doesn't exist or is full; distinguished from a normal
+  // update so the caller can still return 404 while the transaction only persists
+  // the (cleaned) state without adding this player.
+  let rejected = false;
+  const rooms = await mutateRooms((rs) => {
+    const room = rs.find(r => r.id === roomId);
+    if (!room) { rejected = true; return; }
+    room.players = room.players ?? [];
+    const now = Date.now();
+    const name = playerName.trim();
+    const wasEmpty = room.players.length === 0;
+    const idx = room.players.findIndex(p => p.playerName.toLowerCase() === name.toLowerCase());
+    if (idx !== -1) {
+      room.players[idx].lastSeen = now;
+      room.players[idx].playerName = name;
+    } else if (room.players.length < room.maxUsers) {
+      room.players.push({ playerName: name, lastSeen: now });
+    } else {
+      rejected = true;
+      return;
+    }
+    // First player into an empty room begins a fresh round: clear any stale
+    // battle timestamp so they wait (and auto-start can fire again when full).
+    if (wasEmpty) {
+      room.battleStartedAt = null;
+    }
+    // Auto-start the battle once every slot is filled and a challenge is set.
+    if (room.activeChallengeId && room.battleStartedAt == null && room.players.length >= room.maxUsers) {
+      room.battleStartedAt = now;
+    }
+  });
+  if (rejected) return undefined;
+  return rooms.find(r => r.id === roomId);
 }
 
 export async function loadRoomSubmissions(roomId?: string): Promise<RoomSubmission[]> {
