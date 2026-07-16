@@ -73,3 +73,9 @@ next-env.d.ts
 # redundant root copy of the waiting-screen logo (the app serves /public/logo_compressed.gif)
 /logo_compressed.gif
 
+
+# local-only video generation staging (review before adding to the pool — never pushed)
+/local-generated-videos/
+/data/aura-usage-csv.json
+/data/aura-score-staging.json
+/aura-usage-*.csv

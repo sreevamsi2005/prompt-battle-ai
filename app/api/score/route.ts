@@ -1,8 +1,9 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import OpenAI from "openai";
 import { mockScore } from "@/lib/mock-score";
 import { getPromptById } from "@/lib/booth-prompts";
 import { logEvent } from "@/lib/event-log";
+import { stageScoreUsage } from "@/lib/aura-usage";
 
 const SCORE_PROMPT = `Compare these two prompts semantically and return JSON only with this exact shape:
 {"score": <number 0-100>, "feedback": "<short cinematic feedback, max 2 sentences>"}
@@ -96,7 +97,24 @@ export async function POST(request: NextRequest) {
 
     const content = completion.choices[0]?.message?.content;
     const result = parseScoreResponse(content);
-    await logScore(process.env.OPENAI_MODEL ?? "gpt-4o-mini", result.score);
+    const model = process.env.OPENAI_MODEL ?? "gpt-4o-mini";
+    // External usage reporting only (AURA) — stage this play's gpt-4o-mini token
+    // usage so the video-similarity step can assemble the play's CSV row. Runs via
+    // after() so it never blocks the response yet still executes reliably on
+    // serverless (unlike a bare fire-and-forget, which a post-response freeze can
+    // drop); stageScoreUsage also swallows its own errors.
+    const usage = completion.usage;
+    after(() =>
+      stageScoreUsage({
+        playerName: playerName ?? "",
+        challengeId,
+        prompt: userPrompt.trim(),
+        gptInput: usage?.prompt_tokens ?? 0,
+        gptOutput: usage?.completion_tokens ?? 0,
+        ts: Date.now(),
+      })
+    );
+    await logScore(model, result.score);
     return NextResponse.json(result);
   } catch (error) {
     console.error("Score API error:", error);
@@ -133,6 +151,8 @@ async function scoreWithGemini(
   if (!res.ok) throw new Error(`Gemini API error: ${res.status}`);
 
   const data = await res.json();
+  // Note: this Gemini fallback scorer only runs when no OpenAI key is set; it is
+  // not one of the 3 AURA-tracked models, so no usage is staged here.
   const text =
     data.candidates?.[0]?.content?.parts?.[0]?.text ??
     '{"score":0,"feedback":"Unable to analyze."}';

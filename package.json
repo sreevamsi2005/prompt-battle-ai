@@ -15,6 +15,7 @@
     "@netlify/blobs": "^10.7.9",
     "@types/qrcode": "^1.5.6",
     "framer-motion": "^12.39.0",
+    "js-tiktoken": "^1.0.21",
     "next": "16.2.6",
     "openai": "^6.38.0",
     "qrcode": "^1.5.4",

@@ -48,6 +48,10 @@ export interface SimilarityOutcome {
   // Which pipeline produced the score — surfaced in the API response/logs.
   method: "full-video" | `frames-${number}`;
   framesProcessed: number;
+  // Total google-embeddings-002 input tokens consumed for THIS play (reference +
+  // user video). 0 for the reference when its vector was served from cache. Used
+  // only for external AURA usage reporting (see lib/aura-usage.ts).
+  embedInputTokens: number;
 }
 
 // Convert a URL-style path like /videos/golden-field.mp4 → filesystem path.
@@ -158,7 +162,9 @@ function l2Normalize(vec: number[]): number[] {
 }
 
 // Embed one COMPLETE video (raw MP4 bytes) in a single embedContent call.
-async function embedFullVideoVector(bytes: Buffer, apiKey: string, signal?: AbortSignal): Promise<number[]> {
+// Returns the vector plus the input token count reported by the API (used only
+// for external AURA usage reporting; see lib/aura-usage.ts).
+async function embedFullVideoVector(bytes: Buffer, apiKey: string, signal?: AbortSignal): Promise<{ vector: number[]; inputTokens: number }> {
   if (bytes.length > MAX_INLINE_VIDEO_BYTES) {
     throw new Error(`video too large for inline embed (${(bytes.length / 1048576).toFixed(1)}MB)`);
   }
@@ -181,15 +187,16 @@ async function embedFullVideoVector(bytes: Buffer, apiKey: string, signal?: Abor
     throw new Error(`Gemini full-video embed error ${res.status}: ${detail.slice(0, 200)}`);
   }
 
-  const data = (await res.json()) as { embedding?: { values: number[] } };
+  const data = (await res.json()) as { embedding?: { values: number[] }; usageMetadata?: { promptTokenCount?: number } };
   const values = data.embedding?.values;
   if (!values?.length) throw new Error("Gemini returned no embedding for full video");
-  return l2Normalize(values);
+  return { vector: l2Normalize(values), inputTokens: data.usageMetadata?.promptTokenCount ?? 0 };
 }
 
 // Embed a set of JPEG frames with gemini-embedding-2 in a single batch call,
-// then mean-pool into one L2-normalized video vector.
-async function embedFramesVector(frames: Buffer[], apiKey: string): Promise<number[]> {
+// then mean-pool into one L2-normalized video vector. Returns the vector plus the
+// input token count (used only for external AURA usage reporting).
+async function embedFramesVector(frames: Buffer[], apiKey: string): Promise<{ vector: number[]; inputTokens: number }> {
   const res = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/${EMBED_MODEL}:batchEmbedContents?key=${apiKey}`,
     {
@@ -211,7 +218,7 @@ async function embedFramesVector(frames: Buffer[], apiKey: string): Promise<numb
     throw new Error(`Gemini embed error ${res.status}: ${detail.slice(0, 200)}`);
   }
 
-  const data = (await res.json()) as { embeddings?: { values: number[] }[] };
+  const data = (await res.json()) as { embeddings?: { values: number[] }[]; usageMetadata?: { promptTokenCount?: number } };
   const vectors = (data.embeddings ?? []).map((e) => e.values).filter(Boolean);
   if (vectors.length === 0) throw new Error("Gemini returned no embeddings");
 
@@ -220,7 +227,7 @@ async function embedFramesVector(frames: Buffer[], apiKey: string): Promise<numb
   for (const v of vectors) for (let i = 0; i < dim; i++) mean[i] += v[i];
   for (let i = 0; i < dim; i++) mean[i] /= vectors.length;
 
-  return l2Normalize(mean);
+  return { vector: l2Normalize(mean), inputTokens: data.usageMetadata?.promptTokenCount ?? 0 };
 }
 
 function cosineOf(a: number[], b: number[]): number {
@@ -230,7 +237,7 @@ function cosineOf(a: number[], b: number[]): number {
   return cosine;
 }
 
-function toOutcome(cosine: number, method: SimilarityOutcome["method"], framesProcessed: number): SimilarityOutcome {
+function toOutcome(cosine: number, method: SimilarityOutcome["method"], framesProcessed: number, embedInputTokens: number): SimilarityOutcome {
   const score = Math.max(
     0,
     Math.min(100, Math.round(((cosine - COS_FLOOR) / (COS_CEIL - COS_FLOOR)) * 100))
@@ -242,7 +249,7 @@ function toOutcome(cosine: number, method: SimilarityOutcome["method"], framesPr
     : score >= 45 ? "Partial visual overlap — captures some of the reference's look but diverges in key elements."
     : "Visually distinct from the reference in subject, color, or style.";
 
-  return { score, feedback, method, framesProcessed };
+  return { score, feedback, method, framesProcessed, embedInputTokens };
 }
 
 // Reference videos are fixed per challenge, so cache their full-video vectors
@@ -265,22 +272,24 @@ export async function analyzeVideoSimilarity(
   const controller = new AbortController();
   const deadline = setTimeout(() => controller.abort(), FULL_VIDEO_TIMEOUT_MS);
   try {
-    const refPromise = (async () => {
+    // Track embedding input tokens for AURA reporting; a cached reference vector
+    // means no embed call happened, so it contributes 0 tokens.
+    const refPromise = (async (): Promise<{ vector: number[]; inputTokens: number }> => {
       const cached = refVectorCache.get(referenceInput);
-      if (cached) return cached;
+      if (cached) return { vector: cached, inputTokens: 0 };
       const bytes = await fetchVideoBytes(referenceInput, controller.signal);
-      const vec = await embedFullVideoVector(bytes, apiKey, controller.signal);
-      refVectorCache.set(referenceInput, vec);
-      return vec;
+      const emb = await embedFullVideoVector(bytes, apiKey, controller.signal);
+      refVectorCache.set(referenceInput, emb.vector);
+      return emb;
     })();
     const userPromise = (async () => {
       const bytes = await fetchVideoBytes(userInput, controller.signal);
       return embedFullVideoVector(bytes, apiKey, controller.signal);
     })();
 
-    const [refVec, userVec] = await Promise.all([refPromise, userPromise]);
+    const [ref, user] = await Promise.all([refPromise, userPromise]);
     clearTimeout(deadline);
-    return toOutcome(cosineOf(refVec, userVec), "full-video", 0);
+    return toOutcome(cosineOf(ref.vector, user.vector), "full-video", 0, ref.inputTokens + user.inputTokens);
   } catch (err) {
     clearTimeout(deadline);
     const reason = controller.signal.aborted
@@ -294,11 +303,11 @@ export async function analyzeVideoSimilarity(
     extractFrames(referenceInput, FALLBACK_FRAME_COUNT),
     extractFrames(userInput, FALLBACK_FRAME_COUNT),
   ]);
-  const [refVec, userVec] = await Promise.all([
+  const [ref, user] = await Promise.all([
     embedFramesVector(refFrames, apiKey),
     embedFramesVector(userFrames, apiKey),
   ]);
-  return toOutcome(cosineOf(refVec, userVec), `frames-${FALLBACK_FRAME_COUNT}`, FALLBACK_FRAME_COUNT);
+  return toOutcome(cosineOf(ref.vector, user.vector), `frames-${FALLBACK_FRAME_COUNT}`, FALLBACK_FRAME_COUNT, ref.inputTokens + user.inputTokens);
 }
 
 // Legacy frame-based scorer kept for compatibility (route now uses
@@ -310,12 +319,12 @@ export async function scoreVideoSimilarity(
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error("GEMINI_API_KEY not configured");
 
-  const [refVec, userVec] = await Promise.all([
+  const [ref, user] = await Promise.all([
     embedFramesVector(referenceFrames, apiKey),
     embedFramesVector(userFrames, apiKey),
   ]);
 
-  const { score, feedback } = toOutcome(cosineOf(refVec, userVec), `frames-${referenceFrames.length}`, referenceFrames.length);
+  const { score, feedback } = toOutcome(cosineOf(ref.vector, user.vector), `frames-${referenceFrames.length}`, referenceFrames.length, ref.inputTokens + user.inputTokens);
   return { score, feedback };
 }
 

@@ -1,9 +1,10 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { getPromptById } from "@/lib/booth-prompts";
 import { analyzeVideoSimilarity } from "@/lib/video-analysis";
-import { updateRoomSubmissionWithVideoScore, markRoomSubmissionVideoUnavailable } from "@/lib/rooms";
+import { updateRoomSubmissionWithVideoScore, markRoomSubmissionVideoUnavailable, loadRoomSubmissions } from "@/lib/rooms";
 import { logEvent } from "@/lib/event-log";
 import { computeFinalScore } from "@/lib/scoring";
+import { recordPlay } from "@/lib/aura-usage";
 
 // Allow up to 60 s on Netlify (default is 10 s, which isn't enough for
 // frame extraction + vision scoring + blob update).
@@ -57,9 +58,9 @@ export async function POST(req: NextRequest) {
     // gemini-embedding-2 (one vector per video); if that hasn't finished
     // within 30s (its latency can spike unpredictably) it falls back to
     // 16-frame sampling automatically inside analyzeVideoSimilarity.
-    let videoScore: number, vFeedback: string, method: string, framesProcessed: number;
+    let videoScore: number, vFeedback: string, method: string, framesProcessed: number, embedInputTokens: number;
     try {
-      ({ score: videoScore, feedback: vFeedback, method, framesProcessed } =
+      ({ score: videoScore, feedback: vFeedback, method, framesProcessed, embedInputTokens } =
         await analyzeVideoSimilarity(referenceVideoUrl, userVideoUrl));
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -75,6 +76,33 @@ export async function POST(req: NextRequest) {
     }
 
     const compositeScore = computeFinalScore(textScore, videoScore)!;
+
+    // External AURA usage report (reporting-only, never blocks the player): this
+    // is the final step of a play, so assemble the play's row here — joining the
+    // gpt-4o-mini tokens staged at score time, the embedding tokens just consumed,
+    // and the player's email/prompt from their room submission. Runs via after()
+    // so it never adds latency to the score reveal yet still executes reliably on
+    // serverless (a bare fire-and-forget can be dropped by a post-response freeze).
+    after(async () => {
+      let email: string | undefined;
+      let prompt: string | undefined;
+      if (roomId) {
+        try {
+          const subs = await loadRoomSubmissions(roomId);
+          const mine = subs.find((s) => s.playerName.toLowerCase() === playerName.toLowerCase());
+          email = mine?.email;
+          prompt = mine?.prompt;
+        } catch {}
+      }
+      await recordPlay({
+        playerName,
+        challengeId,
+        timestampMs: submissionTimestamp,
+        email,
+        prompt,
+        embeddingInputTokens: embedInputTokens,
+      });
+    });
 
     // Stage 3: update room submission with video + composite scores
     if (roomId) {
